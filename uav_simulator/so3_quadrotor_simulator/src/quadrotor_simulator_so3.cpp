@@ -28,6 +28,9 @@ static Disturbance disturbance;
 
 void stateToOdomMsg(const QuadrotorSimulator::Quadrotor::State& state, nav_msgs::Odometry& odom);
 void quadToImuMsg(const QuadrotorSimulator::Quadrotor& quad, sensor_msgs::Imu& imu);
+void payloadStateToOdomMsg(const QuadrotorSimulator::Quadrotor::State& state, nav_msgs::Odometry& odom);
+void cableInfoToImuMsg(const QuadrotorSimulator::Quadrotor::State& state, sensor_msgs::Imu& imu);
+void loadImuToImuMsg(const QuadrotorSimulator::Quadrotor::State& state, sensor_msgs::Imu& imu);
 
 static Control getControl(const QuadrotorSimulator::Quadrotor& quad, const Command& cmd) {
   const double _kf = quad.getPropellerThrustCoefficient();
@@ -178,6 +181,10 @@ int main(int argc, char** argv) {
 
   ros::Publisher odom_pub = n.advertise<nav_msgs::Odometry>("odom", 100);
   ros::Publisher imu_pub = n.advertise<sensor_msgs::Imu>("imu", 10);
+  ros::Publisher payload_odom_pub = n.advertise<nav_msgs::Odometry>("payload_odom", 100);
+  ros::Publisher drone_imu_pub = n.advertise<sensor_msgs::Imu>("drone_imu/data", 10);
+  ros::Publisher load_imu_pub = n.advertise<sensor_msgs::Imu>("load_imu/data", 10);
+  ros::Publisher cable_info_pub = n.advertise<sensor_msgs::Imu>("cable_info/data", 10);
   ros::Subscriber cmd_sub = n.subscribe("cmd", 100, &cmd_callback, ros::TransportHints().tcpNoDelay());
   ros::Subscriber f_sub = n.subscribe("force_disturbance", 100, &force_disturbance_callback,
                                       ros::TransportHints().tcpNoDelay());
@@ -214,6 +221,19 @@ int main(int argc, char** argv) {
   nav_msgs::Odometry odom_msg;
   odom_msg.header.frame_id = "/simulator";
   odom_msg.child_frame_id = "/" + quad_name;
+
+  nav_msgs::Odometry payload_odom_msg;
+  payload_odom_msg.header.frame_id = "/simulator";
+  payload_odom_msg.child_frame_id = "/payload";
+
+  sensor_msgs::Imu drone_imu;
+  drone_imu.header.frame_id = "/simulator";
+
+  sensor_msgs::Imu load_imu;
+  load_imu.header.frame_id = "/simulator";
+
+  sensor_msgs::Imu cable_info;
+  cable_info.header.frame_id = "/simulator";
 
   sensor_msgs::Imu imu;
   imu.header.frame_id = "/simulator";
@@ -253,11 +273,29 @@ int main(int argc, char** argv) {
 
     if (tnow >= next_odom_pub_time) {
       next_odom_pub_time += odom_pub_duration;
-      odom_msg.header.stamp = tnow;
       state = quad.getState();
+      
+      odom_msg.header.stamp = tnow;
+      payload_odom_msg.header.stamp = tnow;
+      drone_imu.header.stamp = tnow;
+      load_imu.header.stamp = tnow;
+      cable_info.header.stamp = tnow;
+      imu.header.stamp = tnow;
+      
       stateToOdomMsg(state, odom_msg);
+      quadToImuMsg(quad, drone_imu);
       quadToImuMsg(quad, imu);
+      
+      payloadStateToOdomMsg(state, payload_odom_msg);
+      loadImuToImuMsg(state, load_imu);
+      
+      cableInfoToImuMsg(state, cable_info);
+      
       odom_pub.publish(odom_msg);
+      payload_odom_pub.publish(payload_odom_msg);
+      drone_imu_pub.publish(drone_imu);
+      load_imu_pub.publish(load_imu);
+      cable_info_pub.publish(cable_info);
       imu_pub.publish(imu);
     }
 
@@ -304,4 +342,64 @@ void quadToImuMsg(const QuadrotorSimulator::Quadrotor& quad, sensor_msgs::Imu& i
   imu.linear_acceleration.x = quad.getAcc()[0];
   imu.linear_acceleration.y = quad.getAcc()[1];
   imu.linear_acceleration.z = quad.getAcc()[2];
+}
+
+void payloadStateToOdomMsg(const QuadrotorSimulator::Quadrotor::State& state, nav_msgs::Odometry& odom) {
+  odom.pose.pose.position.x = state.xl(0);
+  odom.pose.pose.position.y = state.xl(1);
+  odom.pose.pose.position.z = state.xl(2);
+
+  odom.pose.pose.orientation.x = 0.0;
+  odom.pose.pose.orientation.y = 0.0;
+  odom.pose.pose.orientation.z = 0.0;
+  odom.pose.pose.orientation.w = 1.0;
+
+  odom.twist.twist.linear.x = state.vl(0);
+  odom.twist.twist.linear.y = state.vl(1);
+  odom.twist.twist.linear.z = state.vl(2);
+
+  odom.twist.twist.angular.x = 0.0;
+  odom.twist.twist.angular.y = 0.0;
+  odom.twist.twist.angular.z = 0.0;
+}
+
+void cableInfoToImuMsg(const QuadrotorSimulator::Quadrotor::State& state, sensor_msgs::Imu& imu) {
+  Eigen::Vector3d cable_dir = state.ql.normalized();
+  Eigen::Vector3d up_vector(0, 0, 1);
+  Eigen::Vector3d right_vector = cable_dir.cross(up_vector).normalized();
+  up_vector = right_vector.cross(cable_dir).normalized();
+  
+  Eigen::Matrix3d cable_rotation;
+  cable_rotation.col(0) = right_vector;
+  cable_rotation.col(1) = up_vector;
+  cable_rotation.col(2) = cable_dir;
+  
+  Eigen::Quaterniond cable_q(cable_rotation);
+  imu.orientation.x = cable_q.x();
+  imu.orientation.y = cable_q.y();
+  imu.orientation.z = cable_q.z();
+  imu.orientation.w = cable_q.w();
+
+  imu.angular_velocity.x = state.dql(0);
+  imu.angular_velocity.y = state.dql(1);
+  imu.angular_velocity.z = state.dql(2);
+
+  imu.linear_acceleration.x = 0.0;
+  imu.linear_acceleration.y = 0.0;
+  imu.linear_acceleration.z = 0.0;
+}
+
+void loadImuToImuMsg(const QuadrotorSimulator::Quadrotor::State& state, sensor_msgs::Imu& imu) {
+  imu.orientation.x = 0.0;
+  imu.orientation.y = 0.0;
+  imu.orientation.z = 0.0;
+  imu.orientation.w = 1.0;
+
+  imu.angular_velocity.x = 0.0;
+  imu.angular_velocity.y = 0.0;
+  imu.angular_velocity.z = 0.0;
+
+  imu.linear_acceleration.x = 0.0;
+  imu.linear_acceleration.y = 0.0;
+  imu.linear_acceleration.z = -9.81;
 }
