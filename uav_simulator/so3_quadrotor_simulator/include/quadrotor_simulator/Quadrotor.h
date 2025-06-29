@@ -9,11 +9,16 @@ namespace QuadrotorSimulator {
 class Quadrotor {
 public:
   struct State {
-    Eigen::Vector3d x;
-    Eigen::Vector3d v;
-    Eigen::Matrix3d R;
-    Eigen::Vector3d omega;
-    Eigen::Array4d motor_rpm;
+    Eigen::Vector3d x;  //无人机位置
+    Eigen::Vector3d v;  //无人机速度
+    Eigen::Matrix3d R;  //无人机姿态矩阵
+    Eigen::Vector3d omega;  //无人机角速度
+    Eigen::Array4d motor_rpm; //电机转速
+
+    Eigen::Vector3d xl; //负载的位置
+    Eigen::Vector3d vl; //负载的速度
+    Eigen::Vector3d ql; //缆绳的方向向量
+    Eigen::Vector3d dql; //缆绳方向向量变化率
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
   };
 
@@ -27,6 +32,12 @@ public:
 
   double getMass(void) const;
   void setMass(double mass);
+
+  double getLoadMass(void) const;
+  void setLoadMass(double mass_l);  //负载质量相关
+
+  double getCableLength(void) const;
+  void setCableLength(double l_length);  //缆绳长度相关
 
   double getGravity(void) const;
   void setGravity(double g);
@@ -61,6 +72,12 @@ public:
   double getMinRPM(void) const;
   void setMinRPM(double min_rpm);
 
+  // 获取负载状态的方法
+  Eigen::Vector3d getLoadPos(void) const;
+  Eigen::Vector3d getLoadVel(void) const;
+  Eigen::Vector3d getCableDirection(void) const;
+  Eigen::Vector3d getCableDirectionRate(void) const;
+
   // Inputs are desired RPM for the motors
   // Rotor numbering is:
   //   *1*    Front
@@ -73,7 +90,7 @@ public:
   void step(double dt);
 
   // For internal use, but needs to be public for odeint
-  typedef boost::array<double, 22> InternalState;
+  typedef boost::array<double, 34> InternalState; //负载状态 22+12
   void operator()(const Quadrotor::InternalState& x, Quadrotor::InternalState& dxdt,
                   const double /* t */);
 
@@ -85,6 +102,8 @@ private:
   double alpha0;  // AOA
   double g_;      // gravity
   double mass_;
+  double mass_l_;  //负载质量
+  double l_length_;  //缆绳长度
   Eigen::Matrix3d J_;  // Inertia
   double kf_;
   double km_;
