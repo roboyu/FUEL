@@ -13,6 +13,8 @@ Quadrotor::Quadrotor(void) {
   alpha0 = 48;  // degree
   g_ = 9.81;
   mass_ = 0.98;  // 0.5;
+  mass_l_ = 0.5; // 负载质量
+  l_length_ = 0.5; // 缆绳长度
   double Ixx = 2.64e-3, Iyy = 2.64e-3, Izz = 4.96e-3;
   prop_radius_ = 0.062;
   J_ = Eigen::Vector3d(Ixx, Iyy, Izz).asDiagonal();
@@ -35,6 +37,12 @@ Quadrotor::Quadrotor(void) {
   state_.omega = Eigen::Vector3d::Zero();
   state_.motor_rpm = Eigen::Array4d::Zero();
 
+  //初始化负载状态
+  state_.xl = Eigen::Vector3d(0, 0, -l_length_);
+  state_.vl = Eigen::Vector3d::Zero();
+  state_.ql = Eigen::Vector3d(0, 0, -1);
+  state_.dql = Eigen::Vector3d::Zero();
+
   external_force_.setZero();
 
   updateInternalState();
@@ -42,15 +50,15 @@ Quadrotor::Quadrotor(void) {
   input_ = Eigen::Array4d::Zero();
 }
 
-void Quadrotor::step(double dt) {
+void Quadrotor::step(double dt) {               //step函数
   auto save = internal_state_;
 
   odeint::integrate(boost::ref(*this), internal_state_, 0.0, dt, dt);
 
-  for (int i = 0; i < 22; ++i) {
+  for (int i = 0; i < 34; ++i) {                //22+12
     if (std::isnan(internal_state_[i])) {
       std::cout << "dump " << i << " << pos ";
-      for (int j = 0; j < 22; ++j) {
+      for (int j = 0; j < 34; ++j) {
         std::cout << save[j] << " ";
       }
       std::cout << std::endl;
@@ -72,21 +80,51 @@ void Quadrotor::step(double dt) {
   state_.motor_rpm(2) = internal_state_[20];
   state_.motor_rpm(3) = internal_state_[21];
 
+  //更新负载状态
+  for (int i = 0; i < 3; i++) {
+    state_.xl(i) = internal_state_[22 + i];
+    state_.vl(i) = internal_state_[25 + i];
+    state_.ql(i) = internal_state_[28 + i];
+    state_.dql(i) = internal_state_[31 + i];
+  }
+
   // Re-orthonormalize R (polar decomposition)
   Eigen::LLT<Eigen::Matrix3d> llt(state_.R.transpose() * state_.R);
   Eigen::Matrix3d P = llt.matrixL();
   Eigen::Matrix3d R = state_.R * P.inverse();
   state_.R = R;
 
+   // 缆绳约束处理
+   state_.ql.normalize();
+   double delta = (state_.x - state_.xl).norm() - l_length_;
+   const double kLengthError = 0.025;
+   
+   if (delta > -kLengthError && delta < kLengthError) { // 拉紧状态
+     state_.x = state_.xl - l_length_ * state_.ql;
+     state_.v = state_.vl - l_length_ * state_.dql;
+   } else if (delta >= kLengthError) {                  // 超长状态
+     std::cout << "DYNAMIC ERROR: Length is too long" << std::endl;
+     state_.dql = Eigen::Vector3d::Zero();
+     state_.x = state_.xl - l_length_ * state_.ql;
+     state_.v = state_.vl - l_length_ * state_.dql;
+   }
+
   // Don't go below zero, simulate floor
   if (state_.x(2) < 0.0 && state_.v(2) < 0) {
     state_.x(2) = 0;
     state_.v(2) = 0;
   }
+
+   // 负载地面约束
+   if (state_.xl(2) < 0.0 && state_.vl(2) < 0) {
+    state_.xl(2) = 0;
+    state_.vl(2) = 0;
+  }
+
   updateInternalState();
 }
 
-void Quadrotor::operator()(const Quadrotor::InternalState& x, Quadrotor::InternalState& dxdt,
+void Quadrotor::operator()(const Quadrotor::InternalState& x, Quadrotor::InternalState& dxdt, //operator()函数
                            const double /* t */) {
   State cur_state;
   for (int i = 0; i < 3; i++) {
@@ -101,6 +139,13 @@ void Quadrotor::operator()(const Quadrotor::InternalState& x, Quadrotor::Interna
     cur_state.motor_rpm(i) = x[18 + i];
   }
 
+  // 读取负载状态
+  for (int i = 0; i < 3; i++) {
+    cur_state.xl(i) = x[22 + i];
+    cur_state.vl(i) = x[25 + i];
+    cur_state.ql(i) = x[28 + i];
+    cur_state.dql(i) = x[31 + i];
+  }
   // std::cout << "Omega: " << cur_state.omega << std::endl;
   // std::cout << "motor_rpm: " << cur_state.motor_rpm << std::endl;
 
@@ -115,6 +160,8 @@ void Quadrotor::operator()(const Quadrotor::InternalState& x, Quadrotor::Interna
   Eigen::Vector3d vnorm;
   Eigen::Array4d motor_rpm_sq;
   Eigen::Matrix3d omega_vee(Eigen::Matrix3d::Zero());
+
+  Eigen::Vector3d xl_dot, vl_dot, ql_dot, dql_dot;  // 负载状态的导数
 
   omega_vee(2, 1) = cur_state.omega(0);
   omega_vee(1, 2) = -cur_state.omega(0);
@@ -145,27 +192,73 @@ void Quadrotor::operator()(const Quadrotor::InternalState& x, Quadrotor::Interna
   moments(1) = kf_ * (motor_rpm_sq(1) - motor_rpm_sq(0)) * arm_length_;
   moments(2) = km_ * (motor_rpm_sq(0) + motor_rpm_sq(1) - motor_rpm_sq(2) - motor_rpm_sq(3));
 
-  double resistance = 0.1 *                         // C
-      3.14159265 * (arm_length_) * (arm_length_) *  // S
-      cur_state.v.norm() * cur_state.v.norm();
+  //新增的多体动力学计算
+  double resistancequad = 0.05 *                                        // C
+                        3.14159265 * (arm_length_) * (arm_length_) * // S
+                        cur_state.v.norm() * cur_state.v.norm();
+  Eigen::Vector3d vquadnorm = cur_state.v.normalized();
+  
+  double resistanceload = 0.05 *                                        // C
+                        3.14159265 * (arm_length_) * (arm_length_) * // S
+                        cur_state.vl.norm() * cur_state.vl.norm();
+  Eigen::Vector3d vloadnorm = cur_state.vl.normalized();
 
-  //  ROS_INFO("resistance: %lf, Thrust: %lf%% ", resistance,
-  //           motor_rpm_sq.sum() / (4 * max_rpm_ * max_rpm_) * 100.0);
+  Eigen::Vector3d fl = Eigen::Vector3d(0, 0, 0) - resistanceload * vloadnorm;
+  Eigen::Vector3d fq = Eigen::Vector3d(0, 0, 0) - resistancequad * vquadnorm;
 
-  vnorm = cur_state.v;
-  if (vnorm.norm() != 0) {
-    vnorm.normalize();
+  // 新增的缆绳动力学
+  double delta = (cur_state.x - cur_state.xl).norm() - l_length_;
+  const double kLengthError = 0.025;
+
+  if (delta <= -kLengthError) { // 松弛状态
+    x_dot = cur_state.v;
+    v_dot = -Eigen::Vector3d(0, 0, g_) + thrust * R.col(2) / mass_ + external_force_ / mass_ + fq / mass_;
+    R_dot = R * omega_vee;
+    omega_dot = J_.inverse() * (moments - cur_state.omega.cross(J_ * cur_state.omega) + external_moment_);
+    motor_rpm_dot = (input_ - cur_state.motor_rpm) / motor_time_constant_;
+
+    xl_dot = cur_state.vl;
+    vl_dot = -Eigen::Vector3d(0, 0, g_) + fl / mass_l_;
+    ql_dot = (cur_state.vl - cur_state.v) / l_length_;
+    dql_dot = (fl / mass_l_ - fq / mass_ - thrust * R.col(2) / mass_) / l_length_;
+  } else if (delta > -kLengthError && delta < kLengthError) { // 拉紧状态
+    Eigen::Vector3d norm_ql = cur_state.ql.normalized();
+    x_dot = cur_state.v;
+    v_dot = -Eigen::Vector3d(0, 0, g_) + (thrust * R.col(2) + fq) / mass_ + 
+            (mass_l_ * l_length_ * cur_state.dql.dot(cur_state.dql) + 
+             norm_ql.dot(fl - mass_l_ / mass_ * (fq + thrust * R.col(2)))) * norm_ql / (mass_ + mass_l_);
+    R_dot = R * omega_vee;
+    omega_dot = J_.inverse() * (moments - cur_state.omega.cross(J_ * cur_state.omega) + external_moment_);
+    motor_rpm_dot = (input_ - cur_state.motor_rpm) / motor_time_constant_;
+
+    xl_dot = cur_state.vl;
+    vl_dot = ((norm_ql.dot(thrust * R.col(2) + fq - fl * mass_ / mass_l_) - 
+               mass_ * l_length_ * cur_state.dql.dot(cur_state.dql)) * norm_ql / (mass_ + mass_l_)) - 
+             Eigen::Vector3d(0, 0, g_) + fl / mass_l_;
+    ql_dot = cur_state.dql;
+    dql_dot = (1.0 / (mass_ * l_length_)) * (norm_ql.cross(norm_ql.cross(thrust * R.col(2)))) - 
+              cur_state.dql.dot(cur_state.dql) * norm_ql;
+  } else { // 超长状态
+    std::cout << "DYNAMIC ERROR: Length is too long" << std::endl;
+    Eigen::Vector3d norm_ql = cur_state.ql.normalized();
+    x_dot = cur_state.v;
+    v_dot = -Eigen::Vector3d(0, 0, g_) + (thrust * R.col(2) + fq) / mass_ + 
+            (mass_l_ * l_length_ * cur_state.dql.dot(cur_state.dql) + 
+             norm_ql.dot(fl - mass_l_ / mass_ * (fq + thrust * R.col(2)))) * norm_ql / (mass_ + mass_l_);
+    R_dot = R * omega_vee;
+    omega_dot = J_.inverse() * (moments - cur_state.omega.cross(J_ * cur_state.omega) + external_moment_);
+    motor_rpm_dot = (input_ - cur_state.motor_rpm) / motor_time_constant_;
+
+    xl_dot = cur_state.vl;
+    vl_dot = ((norm_ql.dot(thrust * R.col(2) + fq - fl * mass_ / mass_l_) - 
+               mass_ * l_length_ * cur_state.dql.dot(cur_state.dql)) * norm_ql / (mass_ + mass_l_)) - 
+             Eigen::Vector3d(0, 0, g_) + fl / mass_l_;
+    ql_dot = cur_state.dql;
+    dql_dot = (1.0 / (mass_ * l_length_)) * (norm_ql.cross(norm_ql.cross(thrust * R.col(2)))) - 
+              cur_state.dql.dot(cur_state.dql) * norm_ql;
   }
-  x_dot = cur_state.v;
-  v_dot = -Eigen::Vector3d(0, 0, g_) + thrust * R.col(2) / mass_ + external_force_ / mass_ /*; //*/ -
-      resistance * vnorm / mass_;
 
   acc_ = v_dot;
-  //  acc_[2] = -acc_[2]; // to NED
-
-  R_dot = R * omega_vee;
-  omega_dot = J_.inverse() * (moments - cur_state.omega.cross(J_ * cur_state.omega) + external_moment_);
-  motor_rpm_dot = (input_ - cur_state.motor_rpm) / motor_time_constant_;
 
   for (int i = 0; i < 3; i++) {
     dxdt[0 + i] = x_dot(i);
@@ -178,7 +271,15 @@ void Quadrotor::operator()(const Quadrotor::InternalState& x, Quadrotor::Interna
   for (int i = 0; i < 4; i++) {
     dxdt[18 + i] = motor_rpm_dot(i);
   }
-  for (int i = 0; i < 22; ++i) {
+  // 新增，设置负载状态导数
+  for (int i = 0; i < 3; i++) {
+    dxdt[22 + i] = xl_dot(i);
+    dxdt[25 + i] = vl_dot(i);
+    dxdt[28 + i] = ql_dot(i);
+    dxdt[31 + i] = dql_dot(i);
+  }
+    
+  for (int i = 0; i < 34; ++i) { // 22修改为34
     if (std::isnan(dxdt[i])) {
       dxdt[i] = 0;
       //      std::cout << "nan apply to 0 for " << i << std::endl;
@@ -206,12 +307,18 @@ void Quadrotor::setInput(double u1, double u2, double u3, double u4) {
 const Quadrotor::State& Quadrotor::getState(void) const {
   return state_;
 }
-void Quadrotor::setState(const Quadrotor::State& state) {
+void Quadrotor::setState(const Quadrotor::State& state) { //setState函数
   state_.x = state.x;
   state_.v = state.v;
   state_.R = state.R;
   state_.omega = state.omega;
   state_.motor_rpm = state.motor_rpm;
+
+  //设置负载状态
+  state_.xl = state.xl;
+  state_.vl = state.vl;
+  state_.ql = state.ql;
+  state_.dql = state.dql;
 
   updateInternalState();
 }
@@ -342,7 +449,7 @@ void Quadrotor::setMinRPM(double min_rpm) {
   min_rpm_ = min_rpm;
 }
 
-void Quadrotor::updateInternalState(void) {
+void Quadrotor::updateInternalState(void) { //updateInternalState函数
   for (int i = 0; i < 3; i++) {
     internal_state_[0 + i] = state_.x(i);
     internal_state_[3 + i] = state_.v(i);
@@ -355,9 +462,57 @@ void Quadrotor::updateInternalState(void) {
   internal_state_[19] = state_.motor_rpm(1);
   internal_state_[20] = state_.motor_rpm(2);
   internal_state_[21] = state_.motor_rpm(3);
+
+  // 更新负载状态到内部状态数组
+  for (int i = 0; i < 3; i++) {
+    internal_state_[22 + i] = state_.xl(i);
+    internal_state_[25 + i] = state_.vl(i);
+    internal_state_[28 + i] = state_.ql(i);
+    internal_state_[31 + i] = state_.dql(i);
+  }
 }
 
 Eigen::Vector3d Quadrotor::getAcc() const {
   return acc_;
+}
+// 负载相关的getter方法
+double Quadrotor::getLoadMass(void) const {
+  return mass_l_;
+}
+
+void Quadrotor::setLoadMass(double mass_l) {
+  if (mass_l <= 0) {
+    std::cerr << "Load mass <= 0, not setting" << std::endl;
+    return;
+  }
+  mass_l_ = mass_l;
+}
+
+double Quadrotor::getCableLength(void) const {
+  return l_length_;
+}
+
+void Quadrotor::setCableLength(double l_length) {
+  if (l_length <= 0) {
+    std::cerr << "Cable length <= 0, not setting" << std::endl;
+    return;
+  }
+  l_length_ = l_length;
+}
+
+Eigen::Vector3d Quadrotor::getLoadPos(void) const {
+  return state_.xl;
+}
+
+Eigen::Vector3d Quadrotor::getLoadVel(void) const {
+  return state_.vl;
+}
+
+Eigen::Vector3d Quadrotor::getCableDirection(void) const {
+  return state_.ql;
+}
+
+Eigen::Vector3d Quadrotor::getCableDirectionRate(void) const {
+  return state_.dql;
 }
 }
