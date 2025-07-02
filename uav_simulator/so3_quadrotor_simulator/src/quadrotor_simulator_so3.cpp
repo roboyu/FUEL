@@ -5,6 +5,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/Imu.h>
 #include <uav_utils/geometry_utils.h>
+#include <vector>
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -25,6 +26,20 @@ typedef struct _Disturbance {
 
 static Command command;
 static Disturbance disturbance;
+
+// 气泡模型参数
+struct Bubble {
+  Eigen::Vector3d center; // 气泡中心（世界坐标系）
+  double radius;          // 气泡半径
+};
+std::vector<Bubble> bubbles;
+
+// 气泡分布参数
+const double drone_bubble_radius = 0.25; // 无人机本体气泡半径
+const double load_bubble_radius = 0.15;  // 吊载气泡半径
+const double rod_bubble_radius = 0.05;   // 杆/绳气泡半径
+const int rod_bubble_num = 5;            // 杆/绳分几个气泡
+const double rod_length = 1.0;           // 杆/绳长度
 
 void stateToOdomMsg(const QuadrotorSimulator::Quadrotor::State& state, nav_msgs::Odometry& odom);
 void quadToImuMsg(const QuadrotorSimulator::Quadrotor& quad, sensor_msgs::Imu& imu);
@@ -248,6 +263,26 @@ int main(int argc, char** argv) {
     quad.setExternalForce(disturbance.f);
     quad.setExternalMoment(disturbance.m);
     quad.step(dt);
+
+    // ------------------- 气泡分布逻辑 -------------------
+    state = quad.getState();
+    Eigen::Vector3d drone_pos = state.x; // 无人机质心
+    Eigen::Matrix3d R = state.R;         // 无人机姿态
+    // 假设吊载在无人机正下方 rod_length 处
+    Eigen::Vector3d load_pos = drone_pos - R.col(2) * rod_length;
+    // 清空气泡列表，重新分布
+    bubbles.clear();
+    // 添加无人机本体气泡
+    bubbles.push_back({drone_pos, drone_bubble_radius});
+    // 添加吊载气泡
+    bubbles.push_back({load_pos, load_bubble_radius});
+    // 添加杆/绳气泡（均匀分布在无人机和吊载之间）
+    for (int i = 1; i <= rod_bubble_num; ++i) {
+      double alpha = double(i) / (rod_bubble_num + 1);
+      Eigen::Vector3d rod_pos = drone_pos * (1 - alpha) + load_pos * alpha;
+      bubbles.push_back({rod_pos, rod_bubble_radius});
+    }
+    // ---------------------------------------------------
 
     ros::Time tnow = ros::Time::now();
 
