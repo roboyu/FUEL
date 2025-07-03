@@ -6,6 +6,11 @@
 #include <sensor_msgs/Imu.h>
 #include <uav_utils/geometry_utils.h>
 #include <fstream>
+#include <plan_env/edt_environment.h>
+#include <plan_env/sdf_map.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <memory>
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -43,6 +48,10 @@ const double rod_length = 1.0;           // 杆/绳长度
 
 // 碰撞统计变量
 int collision_count = 0;
+
+// ESDF环境与地图全局变量
+std::shared_ptr<fast_planner::EDTEnvironment> edt_environment_;
+std::shared_ptr<fast_planner::SDFMap> sdf_map_;
 
 void stateToOdomMsg(const QuadrotorSimulator::Quadrotor::State& state, nav_msgs::Odometry& odom);
 void quadToImuMsg(const QuadrotorSimulator::Quadrotor& quad, sensor_msgs::Imu& imu);
@@ -253,6 +262,25 @@ int main(int argc, char** argv) {
   */
 
   ros::Time next_odom_pub_time = ros::Time::now();
+
+  // ----------- 初始化ESDF地图 -------------
+  edt_environment_.reset(new fast_planner::EDTEnvironment());
+  sdf_map_.reset(new fast_planner::SDFMap());
+  sdf_map_->initMap(n); // 读取参数初始化地图
+  // 这里填写你的点云地图路径
+  std::string map_file = "/home/haruka/fuel/src/FUEL/uav_simulator/map_generator/resource/new.pcd";
+  // 加载点云到sdf_map_
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
+  if (pcl::io::loadPCDFile<pcl::PointXYZ>(map_file, *cloud) == -1) {
+    std::cerr << "[ERROR] Cannot load map file: " << map_file << std::endl;
+  } else {
+    std::cout << "[INFO] Loaded map point cloud: " << map_file << ", points: " << cloud->size() << std::endl;
+    // 这里假设原点在(0,0,0)，如有需要可调整
+    sdf_map_->inputPointCloud(*cloud, cloud->size(), Eigen::Vector3d(0,0,0));
+  }
+  edt_environment_->setMap(sdf_map_);
+  // ----------- ESDF地图初始化完毕 -------------
+
   while (n.ok()) {
     ros::spinOnce();
 
