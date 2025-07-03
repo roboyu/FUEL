@@ -8,6 +8,11 @@
 #include <vector>
 #include <signal.h>
 #include <fstream>
+#include <plan_env/edt_environment.h>
+#include <plan_env/sdf_map.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <Eigen/Eigen>
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -45,6 +50,10 @@ const double rod_length = 1.0;           // 杆/绳长度
 
 // 碰撞统计变量
 int collision_count = 0;
+
+// 全局变量
+std::shared_ptr<fast_planner::EDTEnvironment> edt_environment_;
+std::shared_ptr<fast_planner::SDFMap> sdf_map_;
 
 void stateToOdomMsg(const QuadrotorSimulator::Quadrotor::State& state, nav_msgs::Odometry& odom);
 void quadToImuMsg(const QuadrotorSimulator::Quadrotor& quad, sensor_msgs::Imu& imu);
@@ -255,6 +264,24 @@ int main(int argc, char** argv) {
   */
 
   ros::Time next_odom_pub_time = ros::Time::now();
+
+  // ----------- 初始化ESDF地图 -------------
+  edt_environment_.reset(new fast_planner::EDTEnvironment());
+  sdf_map_.reset(new fast_planner::SDFMap());
+  sdf_map_->initMap(n); // 读取参数初始化地图
+  std::string map_file = "/home/haruka/fuel/src/FUEL/uav_simulator/map_generator/resource/new.pcd";
+  // 加载点云到sdf_map_
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
+  if (pcl::io::loadPCDFile<pcl::PointXYZ>(map_file, *cloud) == -1) {
+    std::cerr << "[ERROR] Cannot load map file: " << map_file << std::endl;
+  } else {
+    std::cout << "[INFO] Loaded map point cloud: " << map_file << ", points: " << cloud->size() << std::endl;
+    // 这里假设相机/原点在(0,0,0)，如有需要可调整
+    sdf_map_->inputPointCloud(*cloud, cloud->size(), Eigen::Vector3d(0,0,0));
+  }
+  edt_environment_->setMap(sdf_map_);
+  // ----------- ESDF地图初始化完毕 -------------
+
   while (n.ok()) {
     ros::spinOnce();
 
@@ -291,10 +318,11 @@ int main(int argc, char** argv) {
     bool frame_collided = false;
     for (const auto& bubble : bubbles) {
       double dist = 1e6;
-      // 这里假设有ESDF环境接口 edt_environment_，如无可用点云最近邻或自定义障碍物距离
-      // edt_environment_->evaluateEDT(bubble.center, dist);
-      // TODO: 替换为实际距离查询
-      // 示例：假设dist < bubble.radius即为碰撞
+      if (edt_environment_ && edt_environment_->sdf_map_) {
+        dist = edt_environment_->sdf_map_->getDistance(bubble.center);
+      }
+      // 可选：打印调试
+      // std::cout << "bubble: " << bubble.center.transpose() << ", dist: " << dist << std::endl;
       if (dist < bubble.radius) {
         frame_collided = true;
         break;
