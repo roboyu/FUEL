@@ -1,5 +1,5 @@
 # FUEL
-
+cat /tmp/collision_count.txt
 __News:__
 
 - Feb 24, 2023: the code for **multi-UAV exploration** is released! check [this link](https://github.com/SYSU-STAR/RACER).
