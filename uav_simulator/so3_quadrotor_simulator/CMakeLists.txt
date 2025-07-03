@@ -33,7 +33,7 @@ catkin_package(
 include_directories(include)
 include_directories(
   ${catkin_INCLUDE_DIRS}
-  /home/haruka/fuel/src/FUEL/fuel_planner/plan_env/include
+  /home/haruka/compare/src/FUEL/fuel_planner/plan_env/include
   ${PCL_INCLUDE_DIRS}
 )
 
