@@ -328,7 +328,13 @@ int main(int argc, char** argv) {
         break;
       }
     }
-    if (frame_collided) collision_count++;
+    if (frame_collided) {
+      collision_count++;
+      // 实时更新碰撞次数到文件
+      std::ofstream fout("/tmp/collision_count_baseline.txt");
+      fout << "Total collision count: " << collision_count << std::endl;
+      fout.close();
+    }
     // ---------------------------------------------------
 
     ros::Time tnow = ros::Time::now();
@@ -347,7 +353,7 @@ int main(int argc, char** argv) {
   }
 
   // 仿真退出时写入文件
-  std::ofstream fout("/tmp/collision_count.txt", std::ios::app);
+  std::ofstream fout("/tmp/collision_count_baseline.txt", std::ios::app);
   fout << "Total collision count: " << collision_count << std::endl;
   fout.close();
 
