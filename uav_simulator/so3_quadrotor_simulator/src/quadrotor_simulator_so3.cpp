@@ -8,8 +8,6 @@
 #include <vector>
 #include <signal.h>
 #include <fstream>
-#include <plan_env/edt_environment.h>
-#include <plan_env/sdf_map.h>
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -47,10 +45,6 @@ const double rod_length = 1.0;           // 杆/绳长度
 
 // 碰撞统计变量
 int collision_count = 0;
-
-// 全局变量
-std::shared_ptr<fast_planner::EDTEnvironment> edt_environment_;
-std::shared_ptr<fast_planner::SDFMap> sdf_map_;
 
 void stateToOdomMsg(const QuadrotorSimulator::Quadrotor::State& state, nav_msgs::Odometry& odom);
 void quadToImuMsg(const QuadrotorSimulator::Quadrotor& quad, sensor_msgs::Imu& imu);
@@ -261,19 +255,6 @@ int main(int argc, char** argv) {
   */
 
   ros::Time next_odom_pub_time = ros::Time::now();
-
-  // ----------- 初始化ESDF地图 -------------
-  edt_environment_.reset(new fast_planner::EDTEnvironment());
-  sdf_map_.reset(new fast_planner::SDFMap());
-  sdf_map_->initMap(n); // 读取参数初始化地图
-  // 加载点云地图（可根据实际情况修改）
-  std::string map_file;
-  n.param("simulator/map_file", map_file, std::string("/tmp/test_map.pcd"));
-  // TODO: 这里应实现点云加载到sdf_map_，如有点云话题可订阅，否则需完善inputPointCloud等
-  // sdf_map_->inputPointCloud(...);
-  edt_environment_->setMap(sdf_map_);
-  // ----------- ESDF地图初始化完毕 -------------
-
   while (n.ok()) {
     ros::spinOnce();
 
@@ -310,11 +291,10 @@ int main(int argc, char** argv) {
     bool frame_collided = false;
     for (const auto& bubble : bubbles) {
       double dist = 1e6;
-      if (edt_environment_ && edt_environment_->sdf_map_) {
-        dist = edt_environment_->sdf_map_->getDistance(bubble.center);
-      }
-      // 可选：打印调试
-      // std::cout << "bubble: " << bubble.center.transpose() << ", dist: " << dist << std::endl;
+      // 这里假设有ESDF环境接口 edt_environment_，如无可用点云最近邻或自定义障碍物距离
+      // edt_environment_->evaluateEDT(bubble.center, dist);
+      // TODO: 替换为实际距离查询
+      // 示例：假设dist < bubble.radius即为碰撞
       if (dist < bubble.radius) {
         frame_collided = true;
         break;
