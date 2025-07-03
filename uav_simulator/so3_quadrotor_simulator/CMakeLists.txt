@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(so3_quadrotor_simulator)
-
-add_compile_options(-std=c++11)
+add_compile_options(-std=c++14)
 
 find_package(catkin REQUIRED COMPONENTS
   roscpp
@@ -22,6 +21,8 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include/ode)
 find_package(Armadillo REQUIRED)
 include_directories(${ARMADILLO_INCLUDE_DIRS})
 
+find_package(PCL REQUIRED)
+
 catkin_package(
   INCLUDE_DIRS include
 #  LIBRARIES irobot_msgs
@@ -32,6 +33,8 @@ catkin_package(
 include_directories(include)
 include_directories(
   ${catkin_INCLUDE_DIRS}
+  /home/haruka/fuel/src/FUEL/fuel_planner/plan_env/include
+  ${PCL_INCLUDE_DIRS}
 )
 
 add_library(quadrotor_dynamics src/dynamics/Quadrotor.cpp)
@@ -44,4 +47,6 @@ add_executable(quadrotor_simulator_so3
 target_link_libraries(quadrotor_simulator_so3 
    ${catkin_LIBRARIES}
    quadrotor_dynamics
+   ${PCL_LIBRARIES}
+   plan_env
 )
