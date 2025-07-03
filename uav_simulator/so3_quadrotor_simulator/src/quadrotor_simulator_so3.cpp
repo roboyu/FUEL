@@ -41,6 +41,9 @@ const double rod_bubble_radius = 0.05;   // 杆/绳气泡半径
 const int rod_bubble_num = 5;            // 杆/绳分几个气泡
 const double rod_length = 1.0;           // 杆/绳长度
 
+// 碰撞统计变量
+int collision_count = 0;
+
 void stateToOdomMsg(const QuadrotorSimulator::Quadrotor::State& state, nav_msgs::Odometry& odom);
 void quadToImuMsg(const QuadrotorSimulator::Quadrotor& quad, sensor_msgs::Imu& imu);
 
@@ -282,6 +285,20 @@ int main(int argc, char** argv) {
       Eigen::Vector3d rod_pos = drone_pos * (1 - alpha) + load_pos * alpha;
       bubbles.push_back({rod_pos, rod_bubble_radius});
     }
+    // ------------------- 碰撞统计逻辑 -------------------
+    bool frame_collided = false;
+    for (const auto& bubble : bubbles) {
+      double dist = 1e6;
+      // 这里假设有ESDF环境接口 edt_environment_，如无可用点云最近邻或自定义障碍物距离
+      // edt_environment_->evaluateEDT(bubble.center, dist);
+      // TODO: 替换为实际距离查询
+      // 示例：假设dist < bubble.radius即为碰撞
+      if (dist < bubble.radius) {
+        frame_collided = true;
+        break;
+      }
+    }
+    if (frame_collided) collision_count++;
     // ---------------------------------------------------
 
     ros::Time tnow = ros::Time::now();
@@ -298,6 +315,8 @@ int main(int argc, char** argv) {
 
     r.sleep();
   }
+
+  ROS_INFO("Total collision count: %d", collision_count);
 
   return 0;
 }
