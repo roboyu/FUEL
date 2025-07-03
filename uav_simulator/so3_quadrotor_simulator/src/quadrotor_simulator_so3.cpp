@@ -5,12 +5,14 @@
 #include <ros/ros.h>
 #include <sensor_msgs/Imu.h>
 #include <uav_utils/geometry_utils.h>
+#include <vector>
+#include <signal.h>
 #include <fstream>
 #include <plan_env/edt_environment.h>
 #include <plan_env/sdf_map.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
-#include <memory>
+#include <Eigen/Eigen>
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -49,7 +51,7 @@ const double rod_length = 1.0;           // 杆/绳长度
 // 碰撞统计变量
 int collision_count = 0;
 
-// ESDF环境与地图全局变量
+// 全局变量
 std::shared_ptr<fast_planner::EDTEnvironment> edt_environment_;
 std::shared_ptr<fast_planner::SDFMap> sdf_map_;
 
@@ -267,7 +269,6 @@ int main(int argc, char** argv) {
   edt_environment_.reset(new fast_planner::EDTEnvironment());
   sdf_map_.reset(new fast_planner::SDFMap());
   sdf_map_->initMap(n); // 读取参数初始化地图
-  // 这里填写你的点云地图路径
   std::string map_file = "/home/haruka/fuel/src/FUEL/uav_simulator/map_generator/resource/new.pcd";
   // 加载点云到sdf_map_
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
@@ -275,7 +276,7 @@ int main(int argc, char** argv) {
     std::cerr << "[ERROR] Cannot load map file: " << map_file << std::endl;
   } else {
     std::cout << "[INFO] Loaded map point cloud: " << map_file << ", points: " << cloud->size() << std::endl;
-    // 这里假设原点在(0,0,0)，如有需要可调整
+    // 这里假设相机/原点在(0,0,0)，如有需要可调整
     sdf_map_->inputPointCloud(*cloud, cloud->size(), Eigen::Vector3d(0,0,0));
   }
   edt_environment_->setMap(sdf_map_);
@@ -320,6 +321,8 @@ int main(int argc, char** argv) {
       if (edt_environment_ && edt_environment_->sdf_map_) {
         dist = edt_environment_->sdf_map_->getDistance(bubble.center);
       }
+      // 可选：打印调试
+      // std::cout << "bubble: " << bubble.center.transpose() << ", dist: " << dist << std::endl;
       if (dist < bubble.radius) {
         frame_collided = true;
         break;
@@ -344,7 +347,7 @@ int main(int argc, char** argv) {
   }
 
   // 仿真退出时写入文件
-  std::ofstream fout("/tmp/collision_count_baseline.txt", std::ios::app);
+  std::ofstream fout("/tmp/collision_count.txt", std::ios::app);
   fout << "Total collision count: " << collision_count << std::endl;
   fout.close();
 
