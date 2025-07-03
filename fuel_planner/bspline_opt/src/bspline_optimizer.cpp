@@ -52,6 +52,13 @@ void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/algorithm2", algorithm2_, -1);
   nh.param("manager/bspline_degree", bspline_degree_, 3);
 
+  nh.param("optimization/drone_bubble_radius", drone_bubble_radius_, 0.25);
+  nh.param("optimization/load_bubble_radius", load_bubble_radius_, 0.15);
+  nh.param("optimization/rod_bubble_radius", rod_bubble_radius_, 0.05);
+  nh.param("optimization/rod_length", rod_length_, 1.0);
+  nh.param("optimization/rod_bubble_num", rod_bubble_num_, 5);
+  nh.param("optimization/ld_bubble", ld_bubble_, 1.0);
+
   time_lb_ = -1;  // Not used by in most case
 }
 
@@ -515,6 +522,53 @@ void BsplineOptimizer::calcTimeCost(const double& dt, double& cost, double& gt) 
   }
 }
 
+void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d>& q, double& cost, std::vector<Eigen::Vector3d>& gradient_q) {
+  cost = 0.0;
+  Eigen::Vector3d zero(0, 0, 0);
+  std::fill(gradient_q.begin(), gradient_q.end(), zero);
+  for (int i = 0; i < q.size(); ++i) {
+    Eigen::Vector3d drone_pos = q[i];
+    // 估算R，z轴向下，x轴为前进方向
+    Eigen::Vector3d forward;
+    if (i < q.size() - 1)
+      forward = (q[i + 1] - q[i]).normalized();
+    else if (i > 0)
+      forward = (q[i] - q[i - 1]).normalized();
+    else
+      forward = Eigen::Vector3d(1, 0, 0);
+    Eigen::Vector3d z_axis(0, 0, -1);
+    Eigen::Vector3d y_axis = z_axis.cross(forward).normalized();
+    Eigen::Vector3d x_axis = y_axis.cross(z_axis).normalized();
+    Eigen::Matrix3d R;
+    R.col(0) = x_axis;
+    R.col(1) = y_axis;
+    R.col(2) = z_axis;
+    Eigen::Vector3d load_pos = drone_pos - R.col(2) * rod_length_;
+    std::vector<std::pair<Eigen::Vector3d, double>> bubbles;
+    bubbles.push_back({drone_pos, drone_bubble_radius_});
+    bubbles.push_back({load_pos, load_bubble_radius_});
+    for (int j = 1; j <= rod_bubble_num_; ++j) {
+      double alpha = double(j) / (rod_bubble_num_ + 1);
+      Eigen::Vector3d rod_pos = drone_pos * (1 - alpha) + load_pos * alpha;
+      bubbles.push_back({rod_pos, rod_bubble_radius_});
+    }
+    for (const auto& bubble : bubbles) {
+      double dist;
+      Eigen::Vector3d grad;
+      edt_environment_->evaluateEDTWithGrad(bubble.first, -1.0, dist, grad);
+      if (grad.norm() > 1e-4) grad.normalize();
+      double d = bubble.second - dist;
+      if (d > 0) {
+        cost += std::pow(d, 3);
+        gradient_q[i] += 3.0 * std::pow(d, 2) * (-grad);
+      }
+    }
+  }
+  cost /= (q.size() * (2 + rod_bubble_num_));
+  for (int i = 0; i < q.size(); ++i)
+    gradient_q[i] /= (q.size() * (2 + rod_bubble_num_));
+}
+
 void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<double>& grad,
                                    double& f_combine) {
   {
@@ -641,6 +695,16 @@ void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<dou
     calcTimeCost(dt, f_time, gt_time);
     f_combine += ld_time_ * f_time;
     grad[variable_num_ - 1] += ld_time_ * gt_time;
+  }
+
+  if (ld_bubble_ > 1e-6) {
+    double f_bubble = 0.0;
+    std::vector<Eigen::Vector3d> g_bubble(point_num_, Eigen::Vector3d::Zero());
+    calcBubbleCollisionCost(g_q_, f_bubble, g_bubble);
+    f_combine += ld_bubble_ * f_bubble;
+    for (int i = 0; i < point_num_; i++)
+      for (int j = 0; j < dim_; j++)
+        grad[dim_ * i + j] += ld_bubble_ * g_bubble[i](j);
   }
 
   comb_time += (ros::Time::now() - t1).toSec();
