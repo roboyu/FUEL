@@ -141,6 +141,14 @@ public:
   typedef unique_ptr<BsplineOptimizer> Ptr;
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+  // 气泡模型参数
+  double drone_bubble_radius_, load_bubble_radius_, rod_bubble_radius_, rod_length_;
+  int rod_bubble_num_;
+  double ld_bubble_; // 气泡cost权重
+
+  // 新增：气泡碰撞cost
+  void calcBubbleCollisionCost(const std::vector<Eigen::Vector3d>& q, double& cost, std::vector<Eigen::Vector3d>& gradient_q);
 };
 }  // namespace fast_planner
 #endif
