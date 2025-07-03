@@ -7,6 +7,7 @@
 #include <uav_utils/geometry_utils.h>
 #include <vector>
 #include <signal.h>
+#include <fstream>
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -44,12 +45,6 @@ const double rod_length = 1.0;           // 杆/绳长度
 
 // 碰撞统计变量
 int collision_count = 0;
-
-// 信号处理函数，Ctrl+C时输出总碰撞次数
-void mySigintHandler(int sig) {
-  ROS_INFO("Total collision count: %d", collision_count);
-  ros::shutdown();
-}
 
 void stateToOdomMsg(const QuadrotorSimulator::Quadrotor::State& state, nav_msgs::Odometry& odom);
 void quadToImuMsg(const QuadrotorSimulator::Quadrotor& quad, sensor_msgs::Imu& imu);
@@ -198,7 +193,6 @@ static void moment_disturbance_callback(const geometry_msgs::Vector3::ConstPtr& 
 
 int main(int argc, char** argv) {
   ros::init(argc, argv, "quadrotor_simulator_so3");
-  signal(SIGINT, mySigintHandler); // 注册Ctrl+C信号处理
 
   ros::NodeHandle n("~");
 
@@ -324,7 +318,10 @@ int main(int argc, char** argv) {
     r.sleep();
   }
 
-  ROS_INFO("Total collision count: %d", collision_count);
+  // 仿真退出时写入文件
+  std::ofstream fout("/tmp/collision_count.txt", std::ios::app);
+  fout << "Total collision count: " << collision_count << std::endl;
+  fout.close();
 
   return 0;
 }
