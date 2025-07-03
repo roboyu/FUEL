@@ -1,4 +1,4 @@
-# FUEL
+```bash
 cat /tmp/collision_count.txt
 git clone -b testing git@github.com:roboyu/FUEL.git
 
