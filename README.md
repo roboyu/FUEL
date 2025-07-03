@@ -1,6 +1,10 @@
-```bash
-cat /tmp/collision_count.txt
-git clone -b testing git@github.com:roboyu/FUEL.git
+This is a fuel-based project focusing on drone navigation optimization. A key challenge identified was that the drone struggled to navigate through narrow obstacles when loaded, which affected its operational efficiency in confined environments.
+
+**示例：**
+`cat /tmp/collision_count.txt`
+
+`git clone -b testing git@github.com:roboyu/FUEL.git`
+
 
   
 **FUEL** is a powerful framework for **F**ast **U**AV **E**xp**L**oration.
