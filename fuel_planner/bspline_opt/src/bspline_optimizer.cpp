@@ -59,6 +59,8 @@ void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/rod_bubble_num", rod_bubble_num_, 5);
   nh.param("optimization/ld_bubble", ld_bubble_, 1.0);
 
+  nh.param("optimization/collision_check_interval", collision_check_interval_, 0.02);
+
   time_lb_ = -1;  // Not used by in most case
 }
 
@@ -111,7 +113,7 @@ void BsplineOptimizer::setBoundaryStates(const vector<Eigen::Vector3d>& start,
 }
 
 void BsplineOptimizer::setTimeLowerBound(const double& lb) {
-  time_lb_ = lb;
+  time_lb_ = lb > 0 ? lb : 0.5;
 }
 
 void BsplineOptimizer::optimize(Eigen::MatrixXd& points, double& dt, const int& cost_function,
@@ -528,12 +530,13 @@ void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d
   std::fill(gradient_q.begin(), gradient_q.end(), zero);
 
   // 轨迹密集采样参数
-  double interval = 0.02; // 2cm间隔，可根据需要调整
+  double interval = collision_check_interval_; // 可通过参数服务器设置，默认0.02
   double total_length = 0.0;
   for (int i = 1; i < q.size(); ++i) {
     total_length += (q[i] - q[i-1]).norm();
   }
   int num_samples = std::max(2, int(std::ceil(total_length / interval)));
+  num_samples = std::min(num_samples, 200); // 最多200个采样点，防止过密
 
   for (int s = 0; s < num_samples; ++s) {
     double alpha = double(s) / (num_samples - 1);
