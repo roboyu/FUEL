@@ -59,8 +59,6 @@ void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/rod_bubble_num", rod_bubble_num_, 5);
   nh.param("optimization/ld_bubble", ld_bubble_, 1.0);
 
-  nh.param("optimization/collision_check_interval", collision_check_interval_, 0.02);
-
   time_lb_ = -1;  // Not used by in most case
 }
 
@@ -113,7 +111,7 @@ void BsplineOptimizer::setBoundaryStates(const vector<Eigen::Vector3d>& start,
 }
 
 void BsplineOptimizer::setTimeLowerBound(const double& lb) {
-  time_lb_ = lb > 0 ? lb : 0.5;
+  time_lb_ = lb;
 }
 
 void BsplineOptimizer::optimize(Eigen::MatrixXd& points, double& dt, const int& cost_function,
@@ -528,33 +526,14 @@ void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d
   cost = 0.0;
   Eigen::Vector3d zero(0, 0, 0);
   std::fill(gradient_q.begin(), gradient_q.end(), zero);
-
-  // 轨迹密集采样参数
-  double interval = collision_check_interval_; // 可通过参数服务器设置，默认0.02
-  double total_length = 0.0;
-  for (int i = 1; i < q.size(); ++i) {
-    total_length += (q[i] - q[i-1]).norm();
-  }
-  int num_samples = std::max(2, int(std::ceil(total_length / interval)));
-  num_samples = std::min(num_samples, 200); // 最多200个采样点，防止过密
-
-  for (int s = 0; s < num_samples; ++s) {
-    double alpha = double(s) / (num_samples - 1);
-    // 线性插值获得采样点
-    double seg = alpha * (q.size() - 1);
-    int idx = int(seg);
-    double frac = seg - idx;
-    Eigen::Vector3d drone_pos;
-    if (idx < q.size() - 1)
-      drone_pos = q[idx] * (1 - frac) + q[idx + 1] * frac;
-    else
-      drone_pos = q.back();
+  for (int i = 0; i < q.size(); ++i) {
+    Eigen::Vector3d drone_pos = q[i];
     // 估算R，z轴向下，x轴为前进方向
     Eigen::Vector3d forward;
-    if (idx < q.size() - 1)
-      forward = (q[idx + 1] - q[idx]).normalized();
-    else if (idx > 0)
-      forward = (q[idx] - q[idx - 1]).normalized();
+    if (i < q.size() - 1)
+      forward = (q[i + 1] - q[i]).normalized();
+    else if (i > 0)
+      forward = (q[i] - q[i - 1]).normalized();
     else
       forward = Eigen::Vector3d(1, 0, 0);
     Eigen::Vector3d z_axis(0, 0, -1);
@@ -569,8 +548,8 @@ void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d
     bubbles.push_back({drone_pos, drone_bubble_radius_});
     bubbles.push_back({load_pos, load_bubble_radius_});
     for (int j = 1; j <= rod_bubble_num_; ++j) {
-      double a = double(j) / (rod_bubble_num_ + 1);
-      Eigen::Vector3d rod_pos = drone_pos * (1 - a) + load_pos * a;
+      double alpha = double(j) / (rod_bubble_num_ + 1);
+      Eigen::Vector3d rod_pos = drone_pos * (1 - alpha) + load_pos * alpha;
       bubbles.push_back({rod_pos, rod_bubble_radius_});
     }
     for (const auto& bubble : bubbles) {
@@ -581,15 +560,13 @@ void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d
       double d = bubble.second - dist;
       if (d > 0) {
         cost += std::pow(d, 3);
-        // 梯度分配到最近的q点
-        int grad_idx = std::min(idx, int(q.size()) - 1);
-        gradient_q[grad_idx] += 3.0 * std::pow(d, 2) * (-grad);
+        gradient_q[i] += 3.0 * std::pow(d, 2) * (-grad);
       }
     }
   }
-  cost /= (num_samples * (2 + rod_bubble_num_));
+  cost /= (q.size() * (2 + rod_bubble_num_));
   for (int i = 0; i < q.size(); ++i)
-    gradient_q[i] /= (num_samples * (2 + rod_bubble_num_));
+    gradient_q[i] /= (q.size() * (2 + rod_bubble_num_));
 }
 
 void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<double>& grad,
