@@ -50,6 +50,7 @@ const double rod_length = 1.0;           // 杆/绳长度
 
 // 碰撞统计变量
 int collision_count = 0;
+bool last_collided = false; // 新增：用于统计碰撞次数
 
 // 全局变量
 std::shared_ptr<fast_planner::EDTEnvironment> edt_environment_;
@@ -328,14 +329,17 @@ int main(int argc, char** argv) {
         break;
       }
     }
-    if (frame_collided) {
+    // 只在未碰撞到碰撞的瞬间计数
+    if (frame_collided && !last_collided) {
       collision_count++;
-      // 实时更新碰撞次数到文件
-      std::ofstream fout("/tmp/collision_count_baseline.txt");
-      fout << "Total collision count: " << collision_count << std::endl;
-      fout.close();
     }
+    last_collided = frame_collided;
     // ---------------------------------------------------
+
+    // 实时写入碰撞次数到 /tmp/collision_count_baseline.txt
+    std::ofstream fout("/tmp/collision_count_baseline.txt");
+    fout << collision_count << std::endl;
+    fout.close();
 
     ros::Time tnow = ros::Time::now();
 
