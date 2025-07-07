@@ -92,6 +92,7 @@ cd ${YOUR_WORKSPACE_PATH}/src
 git clone -b compare git@github.com:roboyu/FUEL.git
 cd ../ 
 catkin_make
+rm /tmp/collision_count.txt
 cat /tmp/collision_count.txt
 ```
 
