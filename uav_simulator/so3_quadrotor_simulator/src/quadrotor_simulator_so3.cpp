@@ -8,22 +8,11 @@
 #include <vector>
 #include <signal.h>
 #include <fstream>
-#include <iomanip> // 用于设置输出精度
 #include <plan_env/edt_environment.h>
 #include <plan_env/sdf_map.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
 #include <Eigen/Eigen>
-
-// =========================================================================
-//  最终版评估仿真器 (Final Evaluation Simulator)
-//  - 功能: 
-//    1. 使用与最终版优化器完全一致的、基于加速度的动态摆动模型。
-//    2. 同时统计"独立碰撞次数"和"碰撞率"两个核心安全指标。
-//    3. 所有关键参数均可配置，代码健壮且注释清晰。
-//  - 作者: AI助手
-//  - 日期: [当前日期]
-// =========================================================================
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -42,15 +31,26 @@ typedef struct _Disturbance {
   Eigen::Vector3d m;
 } Disturbance;
 
+static Command command;
+static Disturbance disturbance;
+
 // 气泡模型参数
 struct Bubble {
   Eigen::Vector3d center; // 气泡中心（世界坐标系）
   double radius;          // 气泡半径
 };
+std::vector<Bubble> bubbles;
 
-// 全局变量
-static Command command;
-static Disturbance disturbance;
+// 气泡分布参数
+const double drone_bubble_radius = 0.25; // 无人机本体气泡半径
+const double load_bubble_radius = 0.15;  // 吊载气泡半径
+const double rod_bubble_radius = 0.05;   // 杆/绳气泡半径
+const int rod_bubble_num = 5;            // 杆/绳分几个气泡
+const double rod_length = 1.0;           // 杆/绳长度
+
+// 碰撞统计变量
+int collision_count = 0;
+bool last_collided = false; // 新增：用于统计碰撞次数
 
 // 全局变量
 std::shared_ptr<fast_planner::EDTEnvironment> edt_environment_;
@@ -202,12 +202,11 @@ static void moment_disturbance_callback(const geometry_msgs::Vector3::ConstPtr& 
 }
 
 int main(int argc, char** argv) {
-  // 建议为评估节点使用一个独特的名称
-  ros::init(argc, argv, "quadrotor_simulator_eval_node");
+  ros::init(argc, argv, "quadrotor_simulator_so3");
 
   ros::NodeHandle n("~");
 
-  // --- ROS 通信设置 ---
+  // ROS Publishers and Subscribers
   ros::Publisher odom_pub = n.advertise<nav_msgs::Odometry>("odom", 100);
   ros::Publisher imu_pub = n.advertise<sensor_msgs::Imu>("imu", 10);
   ros::Subscriber cmd_sub = n.subscribe("cmd", 100, &cmd_callback, ros::TransportHints().tcpNoDelay());
@@ -216,7 +215,7 @@ int main(int argc, char** argv) {
   ros::Subscriber m_sub = n.subscribe("moment_disturbance", 100, &moment_disturbance_callback,
                                       ros::TransportHints().tcpNoDelay());
 
-  // --- 仿真器和物理参数初始化 ---
+  // Quadrotor and simulation setup
   QuadrotorSimulator::Quadrotor quad;
   double _init_x, _init_y, _init_z;
   n.param("simulator/init_state_x", _init_x, 0.0);
@@ -247,52 +246,44 @@ int main(int argc, char** argv) {
   sensor_msgs::Imu imu;
   imu.header.frame_id = "/simulator";
 
-  // --- 加载仿真和评估所需的所有参数 ---
+  // ================== 气泡参数通过rosparam读取 ==================
   double drone_bubble_radius, load_bubble_radius, rod_bubble_radius, rod_length, dist0;
   int rod_bubble_num;
-  std::string map_path;
-  n.param("collision_check/drone_bubble_radius", drone_bubble_radius, 0.25);
-  n.param("collision_check/load_bubble_radius", load_bubble_radius, 0.15);
-  n.param("collision_check/rod_bubble_radius", rod_bubble_radius, 0.05);
-  n.param("collision_check/rod_length", rod_length, 1.0);
-  n.param("collision_check/rod_bubble_num", rod_bubble_num, 5);
-  n.param("collision_check/dist0", dist0, 0.0); // 额外安全边际
-  n.param("map/path", map_path, std::string("")); // 地图路径
+  n.param("drone_bubble_radius", drone_bubble_radius, 0.25);
+  n.param("load_bubble_radius", load_bubble_radius, 0.15);
+  n.param("rod_bubble_radius", rod_bubble_radius, 0.05);
+  n.param("rod_length", rod_length, 1.0);
+  n.param("rod_bubble_num", rod_bubble_num, 5);
+  n.param("dist0", dist0, 0.0); // 默认为0，建议与优化器一致
 
-  // --- 初始化ESDF地图 ---
+  // ESDF Map initialization
   edt_environment_.reset(new fast_planner::EDTEnvironment());
   sdf_map_.reset(new fast_planner::SDFMap());
   sdf_map_->initMap(n);
-  if (map_path.empty()) {
-      ROS_WARN("Map path is not set, no map loaded for collision check.");
+  std::string map_file;
+  n.param("map_path", map_file, std::string("")); 
+  if (map_file.empty()) {
+      ROS_WARN("Map file path is empty, no map loaded.");
   } else {
       pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
-      if (pcl::io::loadPCDFile<pcl::PointXYZ>(map_path, *cloud) == -1) {
-          ROS_ERROR_STREAM("Cannot load map file from: " << map_path);
+      if (pcl::io::loadPCDFile<pcl::PointXYZ>(map_file, *cloud) == -1) {
+          ROS_ERROR_STREAM("Cannot load map file from: " << map_file);
       } else {
-          ROS_INFO_STREAM("Loaded map with " << cloud->size() << " points from: " << map_path);
+          ROS_INFO_STREAM("Loaded map with " << cloud->size() << " points from: " << map_file);
           sdf_map_->inputPointCloud(*cloud, cloud->size(), Eigen::Vector3d(0,0,0));
       }
   }
   edt_environment_->setMap(sdf_map_);
 
-  // --- 初始化评估指标变量 ---
-  int collision_events = 0;       // 独立碰撞事件计数
-  bool last_frame_collided = false;
-  long long total_sim_frames = 0;   // 总仿真帧数
-  long long risky_sim_frames = 0;   // 处于危险状态的帧数
-
   ros::Time next_odom_pub_time = ros::Time::now();
 
-  // --- 常量 ---
+  // ========== 常量 ==========
   const Eigen::Vector3d gravity_vec(0.0, 0.0, -9.81);
 
-  // --- 主循环 ---
   while (n.ok()) {
     ros::spinOnce();
-    total_sim_frames++;
 
-    // --- 飞行控制与动力学仿真 ---
+    // Flight control and dynamics simulation
     auto last = control;
     control = getControl(quad, command);
     for (int i = 0; i < 4; ++i) {
@@ -303,11 +294,7 @@ int main(int argc, char** argv) {
     quad.setExternalMoment(disturbance.m);
     quad.step(dt);
 
-    // ======================================================================
-    //  核心评估逻辑: 模型构建 -> 碰撞判断 -> 指标统计
-    // ======================================================================
-    
-    // 1. 模型构建 (与最终版优化器完全一致)
+    // ================== 气泡分布逻辑（与优化器完全一致） ==================
     state = quad.getState();
     const Eigen::Vector3d drone_pos = state.x;
     const Eigen::Vector3d acc_drone = quad.getAcc();
@@ -318,38 +305,33 @@ int main(int argc, char** argv) {
         rod_direction.normalize();
     }
     const Eigen::Vector3d load_pos = drone_pos + rod_length * rod_direction;
-    
-    std::vector<Bubble> bubbles;
+    bubbles.clear();
     bubbles.push_back({drone_pos, drone_bubble_radius});
     bubbles.push_back({load_pos, load_bubble_radius});
     for (int i = 1; i <= rod_bubble_num; ++i) {
       double alpha = double(i) / (rod_bubble_num + 1);
-      bubbles.push_back({drone_pos * (1 - alpha) + load_pos * alpha, rod_bubble_radius});
+      Eigen::Vector3d rod_pos = drone_pos * (1 - alpha) + load_pos * alpha;
+      bubbles.push_back({rod_pos, rod_bubble_radius});
     }
 
-    // 2. 碰撞判断
-    bool current_frame_collided = false;
-    if (edt_environment_ && edt_environment_->sdf_map_) {
-        for (const auto& bubble : bubbles) {
-            double dist = edt_environment_->sdf_map_->getDistance(bubble.center);
-            // 判断是否侵入 (气泡半径 + 额外安全边际)
-            if (dist < bubble.radius + dist0) {
-                current_frame_collided = true;
-                break; 
-            }
-        }
+    // ================== 碰撞统计逻辑（与优化器一致，含dist0） ==================
+    bool frame_collided = false;
+    for (const auto& bubble : bubbles) {
+      double dist = 1e6;
+      if (edt_environment_ && edt_environment_->sdf_map_) {
+        dist = edt_environment_->sdf_map_->getDistance(bubble.center);
+      }
+      if (dist < bubble.radius + dist0) {
+        frame_collided = true;
+        break;
+      }
     }
+    if (frame_collided && !last_collided) {
+      collision_count++;
+    }
+    last_collided = frame_collided;
 
-    // 3. 更新统计指标
-    if (current_frame_collided) {
-        risky_sim_frames++;
-    }
-    if (current_frame_collided && !last_frame_collided) {
-        collision_events++;
-    }
-    last_frame_collided = current_frame_collided;
-
-    // --- ROS消息发布 ---
+    // ROS message publishing
     ros::Time tnow = ros::Time::now();
     if (tnow >= next_odom_pub_time) {
       next_odom_pub_time += odom_pub_duration;
@@ -363,25 +345,10 @@ int main(int argc, char** argv) {
     r.sleep();
   }
 
-  // --- 仿真结束，输出最终评估结果 ---
-  // 使用一个独特的、易于识别的文件名
-  std::ofstream fout("/tmp/safety_evaluation_metrics.txt", std::ios::app);
-  
-  double collision_rate = 0.0;
-  if (total_sim_frames > 0) {
-    collision_rate = static_cast<double>(risky_sim_frames) / total_sim_frames;
-  }
-
-  // 结构化输出，方便解析和对比
-  fout << "--- New Evaluation Run ---" << std::endl;
-  fout << "Timestamp: " << ros::Time::now() << std::endl; // 记录时间戳
-  fout << "Collision Events: " << collision_events << std::endl;
-  fout << "Collision Rate: " << std::fixed << std::setprecision(2) << collision_rate * 100.0 << " %";
-  fout << " (" << risky_sim_frames << " / " << total_sim_frames << " risky frames)" << std::endl;
-  fout << "--------------------------" << std::endl << std::endl;
-  
+  // File output
+  std::ofstream fout("/tmp/collision_count.txt", std::ios::app);
+  fout << "Collision count for this run: " << collision_count << std::endl;
   fout.close();
-  ROS_INFO_STREAM("Safety evaluation results saved to /tmp/safety_evaluation_metrics.txt");
 
   return 0;
 }
