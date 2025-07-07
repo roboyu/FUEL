@@ -16,6 +16,7 @@ class EDTEnvironment;
 class BsplineOptimizer {
 public:
   static const int SMOOTHNESS;
+  static const int DISTANCE;
   static const int FEASIBILITY;
   static const int START;
   static const int END;
@@ -100,7 +101,7 @@ private:
   /* Parameters of optimization  */
   int order_;  // bspline degree
   int bspline_degree_;
-  double ld_smooth_, ld_feasi_, ld_start_, ld_end_, ld_guide_, ld_waypt_, ld_view_, ld_time_;
+  double ld_smooth_, ld_dist_, ld_feasi_, ld_start_, ld_end_, ld_guide_, ld_waypt_, ld_view_, ld_time_;
   double max_vel_, max_acc_;  // dynamic limits
   double wnl_, dlmin_;
   int algorithm1_;                // optimization algorithms for quadratic cost
@@ -141,9 +142,9 @@ public:
   // 气泡模型参数
   double drone_bubble_radius_, load_bubble_radius_, rod_bubble_radius_, rod_length_;
   int rod_bubble_num_;
-  double ld_bubble_; // 气泡cost权重
+  double dist0_; // 安全距离边际参数
 
-  // 新增：气泡碰撞cost
+  // 避障cost（气泡模型，受DISTANCE标志位和ld_dist_权重控制）
   void calcBubbleCollisionCost(const std::vector<Eigen::Vector3d>& q, double& cost, std::vector<Eigen::Vector3d>& gradient_q);
 };
 }  // namespace fast_planner
