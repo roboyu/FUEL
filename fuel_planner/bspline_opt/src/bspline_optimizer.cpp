@@ -8,7 +8,6 @@
 
 namespace fast_planner {
 const int BsplineOptimizer::SMOOTHNESS = (1 << 0);
-const int BsplineOptimizer::DISTANCE = (1 << 1);
 const int BsplineOptimizer::FEASIBILITY = (1 << 2);
 const int BsplineOptimizer::START = (1 << 3);
 const int BsplineOptimizer::END = (1 << 4);
@@ -19,12 +18,11 @@ const int BsplineOptimizer::MINTIME = (1 << 8);
 
 const int BsplineOptimizer::GUIDE_PHASE = BsplineOptimizer::SMOOTHNESS | BsplineOptimizer::GUIDE |
     BsplineOptimizer::START | BsplineOptimizer::END;
-const int BsplineOptimizer::NORMAL_PHASE = BsplineOptimizer::SMOOTHNESS | BsplineOptimizer::DISTANCE |
+const int BsplineOptimizer::NORMAL_PHASE = BsplineOptimizer::SMOOTHNESS |
     BsplineOptimizer::FEASIBILITY | BsplineOptimizer::START | BsplineOptimizer::END;
 
 void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/ld_smooth", ld_smooth_, -1.0);
-  nh.param("optimization/ld_dist", ld_dist_, -1.0);
   nh.param("optimization/ld_feasi", ld_feasi_, -1.0);
   nh.param("optimization/ld_start", ld_start_, -1.0);
   nh.param("optimization/ld_end", ld_end_, -1.0);
@@ -33,7 +31,6 @@ void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/ld_view", ld_view_, -1.0);
   nh.param("optimization/ld_time", ld_time_, -1.0);
 
-  nh.param("optimization/dist0", dist0_, -1.0);
   nh.param("optimization/max_vel", max_vel_, -1.0);
   nh.param("optimization/max_acc", max_acc_, -1.0);
   nh.param("optimization/dlmin", dlmin_, -1.0);
@@ -73,7 +70,6 @@ void BsplineOptimizer::setCostFunction(const int& cost_code) {
   // print optimized cost function
   string cost_str;
   if (cost_function_ & SMOOTHNESS) cost_str += "smooth |";
-  if (cost_function_ & DISTANCE) cost_str += " dist  |";
   if (cost_function_ & FEASIBILITY) cost_str += " feasi |";
   if (cost_function_ & START) cost_str += " start |";
   if (cost_function_ & END) cost_str += " end   |";
@@ -150,7 +146,6 @@ void BsplineOptimizer::optimize(Eigen::MatrixXd& points, double& dt, const int& 
   min_cost_ = std::numeric_limits<double>::max();
   g_q_.resize(point_num_);
   g_smoothness_.resize(point_num_);
-  g_distance_.resize(point_num_);
   g_feasibility_.resize(point_num_);
   g_start_.resize(point_num_);
   g_end_.resize(point_num_);
@@ -285,30 +280,6 @@ void BsplineOptimizer::calcSmoothnessCost(const vector<Eigen::Vector3d>& q, cons
     gradient_q[i + 3] += temp_j;
     // if (optimize_time_)
     //   gt += -6 * ji.dot(ji) / dt;
-  }
-}
-
-void BsplineOptimizer::calcDistanceCost(const vector<Eigen::Vector3d>& q, double& cost,
-                                        vector<Eigen::Vector3d>& gradient_q) {
-  cost = 0.0;
-  Eigen::Vector3d zero(0, 0, 0);
-  std::fill(gradient_q.begin(), gradient_q.end(), zero);
-
-  double dist;
-  Eigen::Vector3d dist_grad, g_zero(0, 0, 0);
-  for (int i = 0; i < q.size(); i++) {
-    if (!dynamic_) {
-      edt_environment_->evaluateEDTWithGrad(q[i], -1.0, dist, dist_grad);
-      if (dist_grad.norm() > 1e-4) dist_grad.normalize();
-    } else {
-      double time = double(i + 2 - order_) * knot_span_ + start_time_;
-      edt_environment_->evaluateEDTWithGrad(q[i], time, dist, dist_grad);
-    }
-
-    if (dist < dist0_) {
-      cost += pow(dist - dist0_, 2);
-      gradient_q[i] += 2.0 * (dist - dist0_) * dist_grad;
-    }
   }
 }
 
@@ -631,14 +602,6 @@ void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<dou
         grad[dim_ * i + j] += ld_smooth_ * g_smoothness_[i](j);
     if (optimize_time_) grad[variable_num_ - 1] += ld_smooth_ * gt_smoothness;
   }
-  if (cost_function_ & DISTANCE) {
-    double f_distance = 0.0;
-    calcDistanceCost(g_q_, f_distance, g_distance_);
-    f_combine += ld_dist_ * f_distance;
-    for (int i = 0; i < point_num_; i++)
-      for (int j = 0; j < dim_; j++)
-        grad[dim_ * i + j] += ld_dist_ * g_distance_[i](j);
-  }
   if (cost_function_ & FEASIBILITY) {
     double f_feasibility = 0.0, gt_feasibility = 0.0;
     calcFeasibilityCost(g_q_, dt, f_feasibility, g_feasibility_, gt_feasibility);
@@ -721,13 +684,6 @@ void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<dou
   //       grad[dim_ * i + j] += ld_smooth_ * g_smoothness_[i](j);
   //   if (optimize_time_)
   //     grad[variable_num_ - 1] += ld_smooth_ * gt_smoothness;
-  // }
-  // if (cost_function_ & DISTANCE)
-  // {
-  //   f_combine += ld_dist_ * f_distance;
-  //   for (int i = 0; i < point_num_; i++)
-  //     for (int j = 0; j < dim_; j++)
-  //       grad[dim_ * i + j] += ld_dist_ * g_distance_[i](j);
   // }
   // if (cost_function_ & FEASIBILITY)
   // {
