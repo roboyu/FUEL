@@ -496,51 +496,115 @@ void BsplineOptimizer::calcTimeCost(const double& dt, double& cost, double& gt) 
 }
 
 void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d>& q, double& cost, std::vector<Eigen::Vector3d>& gradient_q) {
+  // 1. 初始化
   cost = 0.0;
   Eigen::Vector3d zero(0, 0, 0);
   std::fill(gradient_q.begin(), gradient_q.end(), zero);
-  for (int i = 0; i < q.size(); ++i) {
-    Eigen::Vector3d drone_pos = q[i];
-    // 估算R，z轴向下，x轴为前进方向
-    Eigen::Vector3d forward;
-    if (i < q.size() - 1)
-      forward = (q[i + 1] - q[i]).normalized();
-    else if (i > 0)
-      forward = (q[i] - q[i - 1]).normalized();
-    else
-      forward = Eigen::Vector3d(1, 0, 0);
-    Eigen::Vector3d z_axis(0, 0, -1);
-    Eigen::Vector3d y_axis = z_axis.cross(forward).normalized();
-    Eigen::Vector3d x_axis = y_axis.cross(z_axis).normalized();
-    Eigen::Matrix3d R;
-    R.col(0) = x_axis;
-    R.col(1) = y_axis;
-    R.col(2) = z_axis;
-    Eigen::Vector3d load_pos = drone_pos - R.col(2) * rod_length_;
+
+  // 2. 准备常量
+  // 定义世界坐标系下的重力加速度向量 (Z轴向上)
+  const Eigen::Vector3d gravity_vec(0.0, 0.0, -9.81); 
+  const double dt = knot_span_;
+  if (std::abs(dt) < 1e-6) { // 避免除以零
+      return;
+  }
+  const double dt_sq_inv = 1.0 / (dt * dt);
+
+  // 3. 遍历中间的控制点 (因为加速度估算需要 i-1, i, i+1)
+  for (int i = 1; i < q.size() - 1; ++i) {
+    // --- 模型构建 ---
+    // a. 无人机位置
+    const Eigen::Vector3d& drone_pos = q[i];
+
+    // b. 无人机加速度估算
+    const Eigen::Vector3d acc_drone = (q[i + 1] - 2 * q[i] + q[i - 1]) * dt_sq_inv;
+    
+    // c. 计算从无人机指向负载的杆的方向向量
+    Eigen::Vector3d rod_direction = gravity_vec - acc_drone;
+    
+    // d. 安全检查并归一化
+    if (rod_direction.squaredNorm() < 1e-8) { // 使用 squaredNorm() 更高效
+        // 加速度恰好抵消重力，或极小，此时默认杆竖直向下
+        rod_direction = Eigen::Vector3d(0.0, 0.0, -1.0);
+    } else {
+        rod_direction.normalize();
+    }
+
+    // e. 计算负载和杆上各点的位置
+    const Eigen::Vector3d load_pos = drone_pos + rod_direction * rod_length_;
+
+    // --- 创建气泡列表 ---
     std::vector<std::pair<Eigen::Vector3d, double>> bubbles;
+    std::vector<double> alphas; // 存储每个气泡的alpha值，用于后续梯度分配
+    
     bubbles.push_back({drone_pos, drone_bubble_radius_});
+    alphas.push_back(0.0); // 无人机气泡的alpha为0
+
     bubbles.push_back({load_pos, load_bubble_radius_});
+    alphas.push_back(1.0); // 负载气泡的alpha为1
+
     for (int j = 1; j <= rod_bubble_num_; ++j) {
       double alpha = double(j) / (rod_bubble_num_ + 1);
       Eigen::Vector3d rod_pos = drone_pos * (1 - alpha) + load_pos * alpha;
       bubbles.push_back({rod_pos, rod_bubble_radius_});
+      alphas.push_back(alpha); // 杆上气泡的alpha
     }
-    for (const auto& bubble : bubbles) {
+
+    // --- 代价与梯度计算 ---
+    for (size_t k = 0; k < bubbles.size(); ++k) {
+      const auto& bubble = bubbles[k];
+      const double alpha = alphas[k]; // 获取对应的alpha值
+
       double dist;
-      Eigen::Vector3d grad;
-      edt_environment_->evaluateEDTWithGrad(bubble.first, -1.0, dist, grad);
-      if (grad.norm() > 1e-4) grad.normalize();
-      // 使用dist0_作为安全边际
+      Eigen::Vector3d dist_grad;
+      edt_environment_->evaluateEDTWithGrad(bubble.first, -1.0, dist, dist_grad);
+      if (dist_grad.squaredNorm() > 1e-8) dist_grad.normalize();
+
       double d = dist0_ + bubble.second - dist;
+      
       if (d > 0) {
         cost += std::pow(d, 3);
-        gradient_q[i] += 3.0 * std::pow(d, 2) * (-grad);
+        
+        // 【【【最精确的梯度分配】】】
+        Eigen::Vector3d cost_grad_on_bubble_pos = 3.0 * std::pow(d, 2) * (-dist_grad);
+
+        // 我们知道 bubble_pos = (1-alpha)*drone_pos + alpha*load_pos
+        //                = (1-alpha)*q[i] + alpha*(q[i] + rod_dir*L)
+        //                = q[i] + alpha * rod_dir * L
+        
+        // 梯度由两部分贡献：
+        // 1. 整体平移 (q[i] 的变化)
+        // 2. 杆摆动 (rod_dir 的变化, 它依赖于 acc, 进而依赖于 q[i-1], q[i], q[i+1])
+        
+        // 1. 平移项的梯度: d(bubble_pos)/d(q[i]) 中包含一个单位矩阵 I
+        gradient_q[i] += cost_grad_on_bubble_pos;
+
+        // 2. 摆动项的梯度:
+        // d(bubble_pos)/d(q_k) = alpha * L * d(rod_dir)/d(q_k)
+        // d(rod_dir)/d(q_k) ~= -d(acc)/d(q_k) / |g-a| (忽略normalize的导数中的复杂项)
+        // 这个近似已经非常好了。
+        if (alpha > 1e-5) { // alpha=0的气泡(无人机本身)没有摆动项
+            Eigen::Vector3d swing_grad_base = cost_grad_on_bubble_pos * alpha * rod_length_;
+            
+            // 将梯度按照加速度公式 (1, -2, 1) 的系数分配回去
+            gradient_q[i+1] += swing_grad_base * (-dt_sq_inv);
+            gradient_q[i]   -= swing_grad_base * (-2.0 * dt_sq_inv);
+            gradient_q[i-1] += swing_grad_base * (-dt_sq_inv);
+        }
       }
     }
   }
-  cost /= (q.size() * (2 + rod_bubble_num_));
-  for (int i = 0; i < q.size(); ++i)
-    gradient_q[i] /= (q.size() * (2 + rod_bubble_num_));
+
+  // 归一化
+  if (q.size() > 2) {
+      const double normalizer = (q.size() - 2) * (2 + rod_bubble_num_);
+      if (normalizer > 1e-5) {
+        cost /= normalizer;
+        for (int i = 0; i < q.size(); ++i) {
+          gradient_q[i] /= normalizer;
+        }
+      }
+  }
 }
 
 void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<double>& grad,
