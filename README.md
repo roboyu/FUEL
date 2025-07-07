@@ -2,7 +2,7 @@
 
 __News:__
 
-- git clone -b compare git@github.com:roboyu/FUEL.git
+- 
   
 **FUEL** is a powerful framework for **F**ast **U**AV **E**xp**L**oration.
 Our method is demonstrated to complete challenging exploration tasks **3-8 times** faster than state-of-the-art approaches at the time of publication.
@@ -89,7 +89,7 @@ Then simply clone and compile our package (using ssh here):
 
 ```
 cd ${YOUR_WORKSPACE_PATH}/src
-git clone git@github.com:HKUST-Aerial-Robotics/FUEL.git
+git clone -b compare git@github.com:roboyu/FUEL.git
 cd ../ 
 catkin_make
 ```
