@@ -8,6 +8,7 @@
 
 namespace fast_planner {
 const int BsplineOptimizer::SMOOTHNESS = (1 << 0);
+const int BsplineOptimizer::DISTANCE = (1 << 1);
 const int BsplineOptimizer::FEASIBILITY = (1 << 2);
 const int BsplineOptimizer::START = (1 << 3);
 const int BsplineOptimizer::END = (1 << 4);
@@ -23,6 +24,7 @@ const int BsplineOptimizer::NORMAL_PHASE = BsplineOptimizer::SMOOTHNESS |
 
 void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/ld_smooth", ld_smooth_, -1.0);
+  nh.param("optimization/ld_dist", ld_dist_, -1.0);
   nh.param("optimization/ld_feasi", ld_feasi_, -1.0);
   nh.param("optimization/ld_start", ld_start_, -1.0);
   nh.param("optimization/ld_end", ld_end_, -1.0);
@@ -31,6 +33,7 @@ void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/ld_view", ld_view_, -1.0);
   nh.param("optimization/ld_time", ld_time_, -1.0);
 
+  nh.param("optimization/dist0", dist0_, -1.0);
   nh.param("optimization/max_vel", max_vel_, -1.0);
   nh.param("optimization/max_acc", max_acc_, -1.0);
   nh.param("optimization/dlmin", dlmin_, -1.0);
@@ -54,7 +57,6 @@ void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/rod_bubble_radius", rod_bubble_radius_, 0.05);
   nh.param("optimization/rod_length", rod_length_, 1.0);
   nh.param("optimization/rod_bubble_num", rod_bubble_num_, 5);
-  nh.param("optimization/ld_bubble", ld_bubble_, 1.0);
 
   time_lb_ = -1;  // Not used by in most case
 }
@@ -528,7 +530,8 @@ void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d
       Eigen::Vector3d grad;
       edt_environment_->evaluateEDTWithGrad(bubble.first, -1.0, dist, grad);
       if (grad.norm() > 1e-4) grad.normalize();
-      double d = bubble.second - dist;
+      // 使用dist0_作为安全边际
+      double d = dist0_ + bubble.second - dist;
       if (d > 0) {
         cost += std::pow(d, 3);
         gradient_q[i] += 3.0 * std::pow(d, 2) * (-grad);
@@ -660,14 +663,14 @@ void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<dou
     grad[variable_num_ - 1] += ld_time_ * gt_time;
   }
 
-  if (ld_bubble_ > 1e-6) {
+  if (cost_function_ & DISTANCE) {
     double f_bubble = 0.0;
     std::vector<Eigen::Vector3d> g_bubble(point_num_, Eigen::Vector3d::Zero());
     calcBubbleCollisionCost(g_q_, f_bubble, g_bubble);
-    f_combine += ld_bubble_ * f_bubble;
+    f_combine += ld_dist_ * f_bubble;
     for (int i = 0; i < point_num_; i++)
       for (int j = 0; j < dim_; j++)
-        grad[dim_ * i + j] += ld_bubble_ * g_bubble[i](j);
+        grad[dim_ * i + j] += ld_dist_ * g_bubble[i](j);
   }
 
   comb_time += (ros::Time::now() - t1).toSec();
