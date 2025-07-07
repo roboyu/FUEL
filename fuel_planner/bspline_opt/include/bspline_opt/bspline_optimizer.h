@@ -16,7 +16,6 @@ class EDTEnvironment;
 class BsplineOptimizer {
 public:
   static const int SMOOTHNESS;
-  static const int DISTANCE;
   static const int FEASIBILITY;
   static const int START;
   static const int END;
@@ -66,8 +65,6 @@ private:
   // Cost functions, q: control points, dt: knot span
   void calcSmoothnessCost(const vector<Eigen::Vector3d>& q, const double& dt, double& cost,
                           vector<Eigen::Vector3d>& gradient_q, double& gt);
-  void calcDistanceCost(const vector<Eigen::Vector3d>& q, double& cost,
-                        vector<Eigen::Vector3d>& gradient_q);
   void calcFeasibilityCost(const vector<Eigen::Vector3d>& q, const double& dt, double& cost,
                            vector<Eigen::Vector3d>& gradient_q, double& gt);
   void calcStartCost(const vector<Eigen::Vector3d>& q, const double& dt, double& cost,
@@ -103,8 +100,7 @@ private:
   /* Parameters of optimization  */
   int order_;  // bspline degree
   int bspline_degree_;
-  double ld_smooth_, ld_dist_, ld_feasi_, ld_start_, ld_end_, ld_guide_, ld_waypt_, ld_view_, ld_time_;
-  double dist0_;              // safe distance
+  double ld_smooth_, ld_feasi_, ld_start_, ld_end_, ld_guide_, ld_waypt_, ld_view_, ld_time_;
   double max_vel_, max_acc_;  // dynamic limits
   double wnl_, dlmin_;
   int algorithm1_;                // optimization algorithms for quadratic cost
@@ -113,7 +109,7 @@ private:
   double max_iteration_time_[4];  // stopping criteria that can be used
 
   // Data of opt
-  vector<Eigen::Vector3d> g_q_, g_smoothness_, g_distance_, g_feasibility_, g_start_, g_end_, g_guide_,
+  vector<Eigen::Vector3d> g_q_, g_smoothness_, g_feasibility_, g_start_, g_end_, g_guide_,
       g_waypoints_, g_view_, g_time_;
 
   int variable_num_;  // optimization variables
