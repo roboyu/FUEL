@@ -2,8 +2,7 @@
 
 __News:__
 
-- Feb 24, 2023: the code for **multi-UAV exploration** is released! check [this link](https://github.com/SYSU-STAR/RACER).
-- Aug 24, 2021: The CPU-based simulation is released, CUDA is no longer required. Richer exploration environments are provided.
+- git clone -b compare git@github.com:roboyu/FUEL.git
   
 **FUEL** is a powerful framework for **F**ast **U**AV **E**xp**L**oration.
 Our method is demonstrated to complete challenging exploration tasks **3-8 times** faster than state-of-the-art approaches at the time of publication.
