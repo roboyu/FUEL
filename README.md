@@ -92,6 +92,7 @@ cd ${YOUR_WORKSPACE_PATH}/src
 git clone -b compare git@github.com:roboyu/FUEL.git
 cd ../ 
 catkin_make
+cat /tmp/collision_count.txt
 ```
 
 After compilation you can start a sample exploration demo. Firstly run ```Rviz``` for visualization: 
