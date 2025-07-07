@@ -5,6 +5,14 @@
 #include <ros/ros.h>
 #include <sensor_msgs/Imu.h>
 #include <uav_utils/geometry_utils.h>
+#include <vector>
+#include <signal.h>
+#include <fstream>
+#include <plan_env/edt_environment.h>
+#include <plan_env/sdf_map.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <Eigen/Eigen>
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -25,6 +33,28 @@ typedef struct _Disturbance {
 
 static Command command;
 static Disturbance disturbance;
+
+// 气泡模型参数
+struct Bubble {
+  Eigen::Vector3d center; // 气泡中心（世界坐标系）
+  double radius;          // 气泡半径
+};
+std::vector<Bubble> bubbles;
+
+// 气泡分布参数
+const double drone_bubble_radius = 0.25; // 无人机本体气泡半径
+const double load_bubble_radius = 0.15;  // 吊载气泡半径
+const double rod_bubble_radius = 0.05;   // 杆/绳气泡半径
+const int rod_bubble_num = 5;            // 杆/绳分几个气泡
+const double rod_length = 1.0;           // 杆/绳长度
+
+// 碰撞统计变量
+int collision_count = 0;
+bool last_collided = false; // 新增：用于统计碰撞次数
+
+// 全局变量
+std::shared_ptr<fast_planner::EDTEnvironment> edt_environment_;
+std::shared_ptr<fast_planner::SDFMap> sdf_map_;
 
 void stateToOdomMsg(const QuadrotorSimulator::Quadrotor::State& state, nav_msgs::Odometry& odom);
 void quadToImuMsg(const QuadrotorSimulator::Quadrotor& quad, sensor_msgs::Imu& imu);
@@ -176,6 +206,7 @@ int main(int argc, char** argv) {
 
   ros::NodeHandle n("~");
 
+  // ROS Publishers and Subscribers
   ros::Publisher odom_pub = n.advertise<nav_msgs::Odometry>("odom", 100);
   ros::Publisher imu_pub = n.advertise<sensor_msgs::Imu>("imu", 10);
   ros::Subscriber cmd_sub = n.subscribe("cmd", 100, &cmd_callback, ros::TransportHints().tcpNoDelay());
@@ -184,12 +215,12 @@ int main(int argc, char** argv) {
   ros::Subscriber m_sub = n.subscribe("moment_disturbance", 100, &moment_disturbance_callback,
                                       ros::TransportHints().tcpNoDelay());
 
+  // Quadrotor and simulation setup
   QuadrotorSimulator::Quadrotor quad;
   double _init_x, _init_y, _init_z;
   n.param("simulator/init_state_x", _init_x, 0.0);
   n.param("simulator/init_state_y", _init_y, 0.0);
   n.param("simulator/init_state_z", _init_z, 1.0);
-
   Eigen::Vector3d position = Eigen::Vector3d(_init_x, _init_y, _init_z);
   quad.setStatePos(position);
 
@@ -205,43 +236,57 @@ int main(int argc, char** argv) {
   n.param("quadrotor_name", quad_name, std::string("quadrotor"));
 
   QuadrotorSimulator::Quadrotor::State state = quad.getState();
-
   ros::Rate r(simulation_rate);
   const double dt = 1 / simulation_rate;
 
   Control control;
-
   nav_msgs::Odometry odom_msg;
   odom_msg.header.frame_id = "/simulator";
   odom_msg.child_frame_id = "/" + quad_name;
-
   sensor_msgs::Imu imu;
   imu.header.frame_id = "/simulator";
 
-  /*
-  command.force[0] = 0;
-  command.force[1] = 0;
-  command.force[2] = quad.getMass()*quad.getGravity() + 0.1;
-  command.qx = 0;
-  command.qy = 0;
-  command.qz = 0;
-  command.qw = 1;
-  command.kR[0] = 2;
-  command.kR[1] = 2;
-  command.kR[2] = 2;
-  command.kOm[0] = 0.15;
-  command.kOm[1] = 0.15;
-  command.kOm[2] = 0.15;
-  */
+  // ================== 气泡参数通过rosparam读取 ==================
+  double drone_bubble_radius, load_bubble_radius, rod_bubble_radius, rod_length, dist0;
+  int rod_bubble_num;
+  n.param("drone_bubble_radius", drone_bubble_radius, 0.25);
+  n.param("load_bubble_radius", load_bubble_radius, 0.15);
+  n.param("rod_bubble_radius", rod_bubble_radius, 0.05);
+  n.param("rod_length", rod_length, 1.0);
+  n.param("rod_bubble_num", rod_bubble_num, 5);
+  n.param("dist0", dist0, 0.0); // 默认为0，建议与优化器一致
+
+  // ESDF Map initialization
+  edt_environment_.reset(new fast_planner::EDTEnvironment());
+  sdf_map_.reset(new fast_planner::SDFMap());
+  sdf_map_->initMap(n);
+  std::string map_file;
+  n.param("map_path", map_file, std::string("")); 
+  if (map_file.empty()) {
+      ROS_WARN("Map file path is empty, no map loaded.");
+  } else {
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
+      if (pcl::io::loadPCDFile<pcl::PointXYZ>(map_file, *cloud) == -1) {
+          ROS_ERROR_STREAM("Cannot load map file from: " << map_file);
+      } else {
+          ROS_INFO_STREAM("Loaded map with " << cloud->size() << " points from: " << map_file);
+          sdf_map_->inputPointCloud(*cloud, cloud->size(), Eigen::Vector3d(0,0,0));
+      }
+  }
+  edt_environment_->setMap(sdf_map_);
 
   ros::Time next_odom_pub_time = ros::Time::now();
+
+  // ========== 常量 ==========
+  const Eigen::Vector3d gravity_vec(0.0, 0.0, -9.81);
+
   while (n.ok()) {
     ros::spinOnce();
 
+    // Flight control and dynamics simulation
     auto last = control;
     control = getControl(quad, command);
     for (int i = 0; i < 4; ++i) {
-      //! @bug might have nan when the input is legal
       if (std::isnan(control.rpm[i])) control.rpm[i] = last.rpm[i];
     }
     quad.setInput(control.rpm[0], control.rpm[1], control.rpm[2], control.rpm[3]);
@@ -249,12 +294,48 @@ int main(int argc, char** argv) {
     quad.setExternalMoment(disturbance.m);
     quad.step(dt);
 
-    ros::Time tnow = ros::Time::now();
+    // ================== 气泡分布逻辑（与优化器完全一致） ==================
+    state = quad.getState();
+    const Eigen::Vector3d drone_pos = state.x;
+    const Eigen::Vector3d acc_drone = quad.getAcc();
+    Eigen::Vector3d rod_direction = gravity_vec - acc_drone;
+    if (rod_direction.squaredNorm() < 1e-8) {
+        rod_direction = Eigen::Vector3d(0.0, 0.0, -1.0);
+    } else {
+        rod_direction.normalize();
+    }
+    const Eigen::Vector3d load_pos = drone_pos + rod_length * rod_direction;
+    bubbles.clear();
+    bubbles.push_back({drone_pos, drone_bubble_radius});
+    bubbles.push_back({load_pos, load_bubble_radius});
+    for (int i = 1; i <= rod_bubble_num; ++i) {
+      double alpha = double(i) / (rod_bubble_num + 1);
+      Eigen::Vector3d rod_pos = drone_pos * (1 - alpha) + load_pos * alpha;
+      bubbles.push_back({rod_pos, rod_bubble_radius});
+    }
 
+    // ================== 碰撞统计逻辑（与优化器一致，含dist0） ==================
+    bool frame_collided = false;
+    for (const auto& bubble : bubbles) {
+      double dist = 1e6;
+      if (edt_environment_ && edt_environment_->sdf_map_) {
+        dist = edt_environment_->sdf_map_->getDistance(bubble.center);
+      }
+      if (dist < bubble.radius + dist0) {
+        frame_collided = true;
+        break;
+      }
+    }
+    if (frame_collided && !last_collided) {
+      collision_count++;
+    }
+    last_collided = frame_collided;
+
+    // ROS message publishing
+    ros::Time tnow = ros::Time::now();
     if (tnow >= next_odom_pub_time) {
       next_odom_pub_time += odom_pub_duration;
       odom_msg.header.stamp = tnow;
-      state = quad.getState();
       stateToOdomMsg(state, odom_msg);
       quadToImuMsg(quad, imu);
       odom_pub.publish(odom_msg);
@@ -263,6 +344,11 @@ int main(int argc, char** argv) {
 
     r.sleep();
   }
+
+  // File output
+  std::ofstream fout("/tmp/collision_count.txt", std::ios::app);
+  fout << "Collision count for this run: " << collision_count << std::endl;
+  fout.close();
 
   return 0;
 }
