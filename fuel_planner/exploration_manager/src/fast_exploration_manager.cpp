@@ -18,6 +18,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <visualization_msgs/Marker.h>
+#include <geometry_msgs/PointStamped.h>
 
 using namespace Eigen;
 
@@ -85,6 +86,20 @@ void FastExplorationManager::initialize(ros::NodeHandle& nh) {
   // fout.close();
 }
 
+void FastExplorationManager::setTargetPoint(const geometry_msgs::PointStamped& pt) {
+  target_point_ = pt;
+  has_target_ = true;
+}
+
+bool FastExplorationManager::hasTarget() const {
+  return has_target_;
+}
+
+Eigen::Vector3d FastExplorationManager::getTargetPosition() const {
+  if (!has_target_) return Eigen::Vector3d::Zero();
+  return Eigen::Vector3d(target_point_.point.x, target_point_.point.y, target_point_.point.z);
+}
+
 int FastExplorationManager::planExploreMotion(
     const Vector3d& pos, const Vector3d& vel, const Vector3d& acc, const Vector3d& yaw) {
   ros::Time t1 = ros::Time::now();
@@ -94,6 +109,12 @@ int FastExplorationManager::planExploreMotion(
 
   std::cout << "start pos: " << pos.transpose() << ", vel: " << vel.transpose()
             << ", acc: " << acc.transpose() << std::endl;
+
+  // === 目标点引导探索逻辑入口（后续可扩展） ===
+  if (has_target_) {
+    // TODO: 在此处根据目标点调整探索策略
+    // 例如：优先靠近目标点、判断是否进入目标区等
+  }
 
   // Search frontiers and group them into clusters
   frontier_finder_->searchFrontiers();
