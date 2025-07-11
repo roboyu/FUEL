@@ -1,23 +1,3 @@
-
-```
-
-Next, you can run the following commands to install other required tools:
-```
-sudo apt-get install libarmadillo-dev
-```
-
-<!-- To simulate the depth camera, we use a simulator based on CUDA Toolkit. Please install it first following the [instruction of CUDA](https://developer.nvidia.com/zh-cn/cuda-toolkit). 
-
-After successful installation, in the **local_sensing** package in **uav_simulator**, remember to change the 'arch' and 'code' flags in CMakelist.txt according to your graphics card devices. You can check the right code [here](https://github.com/tpruvot/ccminer/wiki/Compatibility). For example:
-
-```
-  set(CUDA_NVCC_FLAGS 
-    -gencode arch=compute_61,code=sm_61;
-  ) 
-``` -->
-
-Then simply clone and compile our package (using ssh here):
-
 ```
 cd ${YOUR_WORKSPACE_PATH}/src
 git clone git@github.com:HKUST-Aerial-Robotics/FUEL.git
@@ -84,31 +64,6 @@ You may also need to change the bounding box of explored space in [exploration.l
     <arg name="box_max_y" value="15.0"/>
     <arg name="box_max_z" value=" 2.0"/>
 ```
-
-To create your own .pcd environments easily, check the [next section](#creating-a-pcd-environment).
-
-## Creating a _.pcd_ Environment
-
-We provide a simple tool to create .pcd environments.
-First, run:
-
-```
-  rosrun map_generator click_map
-```
-
-Then in ```Rviz```, use the ```2D Nav Goal``` tool (shortcut G) to create your map. Two consecutively clicked points form a wall.
-An example is illustrated:
-
-<p id="demo5" align="center">
-<img src="files/create_map.gif" width = "600" height = "340"/>
-</p>
-
-After you've finished, run the following node to save the map in another terminal:
-
-```
-  rosrun map_generator map_recorder ~/
-```
-
 Normally, a file named __tmp.pcd__ will be saved at ```~/```. You may replace ```~/``` with any locations you want.
 Lastly, you can use this file for exploration, as mentioned [here](#exploring-different-environments).
 
