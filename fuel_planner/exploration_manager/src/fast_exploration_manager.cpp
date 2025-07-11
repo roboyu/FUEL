@@ -102,6 +102,20 @@ Eigen::Vector3d FastExplorationManager::getTargetPosition() const {
 
 int FastExplorationManager::planExploreMotion(
     const Vector3d& pos, const Vector3d& vel, const Vector3d& acc, const Vector3d& yaw) {
+  // === 根據是否有目標點，選擇不同的探索策略 ===
+  if (hasTarget()) {
+    // ******** 目標引導探索/目標區域導航邏輯 ********
+    ROS_WARN("Executing target-guided exploration logic...");
+    Eigen::Vector3d target_area_center = getTargetPosition();
+    // TODO: 這裡可以根據需求，判斷是否已進入目標區域，
+    // 或者直接將目標點作為導航終點，或優先選擇靠近目標點的前沿。
+    // 目前先直接進行常規探索，後續可擴展為目標區域導航/懸停點搜索等。
+    // 例如：return planToTargetArea(pos, vel, acc, yaw, target_area_center);
+    // 目前暫時調用原有探索流程，後續可細化
+  } else {
+    // ******** 傳統自由探索邏輯 ********
+    ROS_WARN("Executing free exploration logic...");
+  }
   ros::Time t1 = ros::Time::now();
   auto t2 = t1;
   ed_->views_.clear();
