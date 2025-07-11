@@ -8,6 +8,7 @@
 #include <std_msgs/Empty.h>
 #include <nav_msgs/Odometry.h>
 #include <visualization_msgs/Marker.h>
+#include <geometry_msgs/PointStamped.h>
 
 #include <algorithm>
 #include <iostream>
@@ -44,15 +45,22 @@ private:
 
   bool classic_;
 
+  /* Target point related members */
+  geometry_msgs::PointStamped target_point_;
+  bool has_target_;
+  bool target_in_map_frame_;
+
   /* ROS utils */
   ros::NodeHandle node_;
   ros::Timer exec_timer_, safety_timer_, vis_timer_, frontier_timer_;
-  ros::Subscriber trigger_sub_, odom_sub_;
-  ros::Publisher replan_pub_, new_pub_, bspline_pub_;
+  ros::Subscriber trigger_sub_, odom_sub_, targetpoint_sub_;
+  ros::Publisher replan_pub_, new_pub_, bspline_pub_, target_vis_pub_;
 
   /* helper functions */
   int callExplorationPlanner();
   void transitState(EXPL_STATE new_state, string pos_call);
+  void visualizeTargetPoint();
+  bool isValidTargetPoint(const geometry_msgs::PointStamped& point);
 
   /* ROS functions */
   void FSMCallback(const ros::TimerEvent& e);
@@ -60,16 +68,24 @@ private:
   void frontierCallback(const ros::TimerEvent& e);
   void triggerCallback(const nav_msgs::PathConstPtr& msg);
   void odometryCallback(const nav_msgs::OdometryConstPtr& msg);
+  void targetPointCallback(const geometry_msgs::PointStampedConstPtr& msg);
   void visualize();
   void clearVisMarker();
 
 public:
   FastExplorationFSM(/* args */) {
+    has_target_ = false;
+    target_in_map_frame_ = false;
   }
   ~FastExplorationFSM() {
   }
 
   void init(ros::NodeHandle& nh);
+  
+  // Getter functions for target point
+  bool hasTarget() const { return has_target_; }
+  geometry_msgs::PointStamped getTargetPoint() const { return target_point_; }
+  Vector3d getTargetPosition() const;
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
