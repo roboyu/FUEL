@@ -5,6 +5,7 @@
 #include <Eigen/Eigen>
 #include <memory>
 #include <vector>
+#include <geometry_msgs/PointStamped.h>
 
 using Eigen::Vector3d;
 using std::shared_ptr;
@@ -30,6 +31,11 @@ public:
 
   int planExploreMotion(const Vector3d& pos, const Vector3d& vel, const Vector3d& acc,
                         const Vector3d& yaw);
+
+  // 新增：设置目标点接口
+  void setTargetPoint(const geometry_msgs::PointStamped& pt);
+  bool hasTarget() const;
+  Eigen::Vector3d getTargetPosition() const;
 
   // Benchmark method, classic frontier and rapid frontier
   int classicFrontier(const Vector3d& pos, const double& yaw);
@@ -58,6 +64,10 @@ private:
 
 public:
   typedef shared_ptr<FastExplorationManager> Ptr;
+
+  // 新增：目标点相关成员
+  geometry_msgs::PointStamped target_point_;
+  bool has_target_ = false;
 };
 
 }  // namespace fast_planner
