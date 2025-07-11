@@ -1,6 +1,6 @@
 ```
 cd ${YOUR_WORKSPACE_PATH}/src
-git clone git@github.com:HKUST-Aerial-Robotics/FUEL.git
+git clone -b place git@github.com:roboyu/FUEL.git
 cd ../ 
 catkin_make
 ```
