@@ -159,7 +159,16 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
       if (t_cur > fp_->replan_thresh3_ && !classic_) {
         transitState(PLAN_TRAJ, "FSM");
         ROS_WARN("Replan: periodic call=======================================");
+        return;
       }
+      // ---- 新增邏輯：響應新的目標點 ----
+      if (expl_manager_->hasTarget() && state_ != PLAN_TRAJ) {
+        Eigen::Vector3d new_target_pos = expl_manager_->getTargetPosition();
+        ROS_WARN_STREAM("New target point received: " << new_target_pos.transpose() << ". Triggering replan for target-guided exploration.");
+        transitState(PLAN_TRAJ, "EXEC_TRAJ_TARGET_RESPONSE");
+        return;
+      }
+      // ---- 新增邏輯結束 ----
       break;
     }
   }
