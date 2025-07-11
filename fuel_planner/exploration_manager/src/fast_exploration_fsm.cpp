@@ -62,13 +62,21 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
         ROS_WARN_THROTTLE(1.0, "no odom.");
         return;
       }
-      // Go to wait trigger when odom is ok
+      // 只有收到目标点才进入WAIT_TRIGGER
+      if (!has_target_) {
+        ROS_WARN_THROTTLE(1.0, "waiting for target point...");
+        return;
+      }
       transitState(WAIT_TRIGGER, "FSM");
       break;
     }
 
     case WAIT_TRIGGER: {
-      // Do nothing but wait for trigger
+      // 只有收到目标点和触发信号才进入规划
+      if (!has_target_) {
+        ROS_WARN_THROTTLE(1.0, "waiting for target point...");
+        return;
+      }
       ROS_WARN_THROTTLE(1.0, "wait for trigger.");
       break;
     }
@@ -388,6 +396,11 @@ void FastExplorationFSM::targetPointCallback(const geometry_msgs::PointStampedCo
   target_point_ = *msg;
   has_target_ = true;
   target_in_map_frame_ = (msg->header.frame_id == "map");
+
+  // 通知探索管理器
+  if (expl_manager_) {
+    expl_manager_->setTargetPoint(target_point_);
+  }
 
   ROS_INFO("Target point received: frame_id=%s, position=(%.2f, %.2f, %.2f)", 
            msg->header.frame_id.c_str(), msg->point.x, msg->point.y, msg->point.z);
