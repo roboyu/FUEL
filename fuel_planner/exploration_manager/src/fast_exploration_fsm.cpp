@@ -8,6 +8,9 @@
 #include <plan_env/edt_environment.h>
 #include <plan_env/sdf_map.h>
 
+#include <iomanip>
+#include <sstream>
+
 using Eigen::Vector4d;
 
 namespace fast_planner {
@@ -41,10 +44,12 @@ void FastExplorationFSM::init(ros::NodeHandle& nh) {
   trigger_sub_ =
       nh.subscribe("/waypoint_generator/waypoints", 1, &FastExplorationFSM::triggerCallback, this);
   odom_sub_ = nh.subscribe("/odom_world", 1, &FastExplorationFSM::odometryCallback, this);
+  targetpoint_sub_ = nh.subscribe("/rescue_drop_point", 1, &FastExplorationFSM::targetPointCallback, this);
 
   replan_pub_ = nh.advertise<std_msgs::Empty>("/planning/replan", 10);
   new_pub_ = nh.advertise<std_msgs::Empty>("/planning/new", 10);
   bspline_pub_ = nh.advertise<bspline::Bspline>("/planning/bspline", 10);
+  target_vis_pub_ = nh.advertise<visualization_msgs::Marker>("/target_point_visualization", 10);
 }
 
 void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
@@ -370,4 +375,118 @@ void FastExplorationFSM::transitState(EXPL_STATE new_state, string pos_call) {
   cout << "[" + pos_call + "]: from " + fd_->state_str_[pre_s] + " to " + fd_->state_str_[int(new_state)]
        << endl;
 }
+
+void FastExplorationFSM::targetPointCallback(const geometry_msgs::PointStampedConstPtr& msg) {
+  // Check if the target point is valid
+  if (!isValidTargetPoint(*msg)) {
+    ROS_WARN("Invalid target point received: frame_id=%s, position=(%.2f, %.2f, %.2f)", 
+             msg->header.frame_id.c_str(), msg->point.x, msg->point.y, msg->point.z);
+    return;
+  }
+
+  // Store the target point
+  target_point_ = *msg;
+  has_target_ = true;
+  target_in_map_frame_ = (msg->header.frame_id == "map");
+
+  ROS_INFO("Target point received: frame_id=%s, position=(%.2f, %.2f, %.2f)", 
+           msg->header.frame_id.c_str(), msg->point.x, msg->point.y, msg->point.z);
+
+  // Visualize the target point
+  visualizeTargetPoint();
+
+  // If we have odometry and are in WAIT_TRIGGER state, we can start planning
+  if (fd_->have_odom_ && state_ == WAIT_TRIGGER) {
+    ROS_INFO("Target point received while waiting for trigger. Ready to start target-guided exploration.");
+  }
+}
+
+bool FastExplorationFSM::isValidTargetPoint(const geometry_msgs::PointStamped& point) {
+  // Check if frame_id is valid
+  if (point.header.frame_id.empty()) {
+    ROS_WARN("Target point has empty frame_id");
+    return false;
+  }
+
+  // Check if position is reasonable (within map bounds)
+  // These bounds should match your map configuration
+  const double max_x = 25.0, max_y = 25.0, max_z = 5.0;
+  if (abs(point.point.x) > max_x || abs(point.point.y) > max_y || 
+      point.point.z < 0.0 || point.point.z > max_z) {
+    ROS_WARN("Target point out of bounds: (%.2f, %.2f, %.2f)", 
+             point.point.x, point.point.y, point.point.z);
+    return false;
+  }
+
+  return true;
+}
+
+void FastExplorationFSM::visualizeTargetPoint() {
+  if (!has_target_) return;
+
+  visualization_msgs::Marker marker;
+  marker.header.frame_id = target_point_.header.frame_id;
+  marker.header.stamp = ros::Time::now();
+  marker.ns = "target_point";
+  marker.id = 0;
+  marker.type = visualization_msgs::Marker::SPHERE;
+  marker.action = visualization_msgs::Marker::ADD;
+
+  marker.pose.position = target_point_.point;
+  marker.pose.orientation.w = 1.0;
+
+  marker.scale.x = 0.5;
+  marker.scale.y = 0.5;
+  marker.scale.z = 0.5;
+
+  marker.color.r = 1.0;
+  marker.color.g = 0.0;
+  marker.color.b = 0.0;
+  marker.color.a = 0.8;
+
+  marker.lifetime = ros::Duration(0);
+
+  target_vis_pub_.publish(marker);
+
+  // Also publish a text marker to show coordinates
+  visualization_msgs::Marker text_marker;
+  text_marker.header.frame_id = target_point_.header.frame_id;
+  text_marker.header.stamp = ros::Time::now();
+  text_marker.ns = "target_text";
+  text_marker.id = 0;
+  text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+  text_marker.action = visualization_msgs::Marker::ADD;
+
+  text_marker.pose.position = target_point_.point;
+  text_marker.pose.position.z += 1.0; // Offset above the sphere
+  text_marker.pose.orientation.w = 1.0;
+
+  text_marker.scale.z = 0.3; // Text size
+
+  text_marker.color.r = 1.0;
+  text_marker.color.g = 1.0;
+  text_marker.color.b = 1.0;
+  text_marker.color.a = 1.0;
+
+  std::stringstream ss;
+  ss << "Target: (" << std::fixed << std::setprecision(1) 
+     << target_point_.point.x << ", " 
+     << target_point_.point.y << ", " 
+     << target_point_.point.z << ")";
+  text_marker.text = ss.str();
+
+  text_marker.lifetime = ros::Duration(0);
+
+  target_vis_pub_.publish(text_marker);
+}
+
+Vector3d FastExplorationFSM::getTargetPosition() const {
+  if (!has_target_) {
+    ROS_WARN("No target point available");
+    return Vector3d::Zero();
+  }
+  
+  return Vector3d(target_point_.point.x, target_point_.point.y, target_point_.point.z);
+}
+
 }  // namespace fast_planner
