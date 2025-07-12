@@ -108,6 +108,9 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
         fd_->start_yaw_(2) = info->yawdotdot_traj_.evaluateDeBoorT(t_r)[0];
       }
 
+      // 將最新位姿傳遞給Manager
+      expl_manager_->setCurrentPose(fd_->start_pt_, fd_->start_vel_, fd_->start_yaw_);
+
       // Inform traj_server the replanning
       replan_pub_.publish(std_msgs::Empty());
       int res = callExplorationPlanner();
@@ -141,6 +144,9 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
     case EXEC_TRAJ: {
       LocalTrajData* info = &planner_manager_->local_data_;
       double t_cur = (ros::Time::now() - info->start_time_).toSec();
+
+      // 將當前執行狀態下的位姿也傳遞給Manager
+      expl_manager_->setCurrentPose(fd_->odom_pos_, fd_->odom_vel_, fd_->odom_yaw_);
 
       // Replan if traj is almost fully executed
       double time_to_end = info->duration_ - t_cur;
