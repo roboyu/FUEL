@@ -47,6 +47,11 @@ public:
   shared_ptr<FrontierFinder> frontier_finder_;
   // unique_ptr<ViewFinder> view_finder_;
 
+  void setCurrentPose(const Eigen::Vector3d& pos, const Eigen::Vector3d& vel, const Eigen::Vector3d& yaw);
+  bool isNearTargetArea(const Eigen::Vector3d& current_pos, const Eigen::Vector3d& target_center, double radius) const;
+  // 懸停點搜尋器接口
+  bool findBestHoverPoint(const Eigen::Vector3d& target_center, double search_radius, Eigen::Vector3d& best_point);
+
 private:
   shared_ptr<EDTEnvironment> edt_environment_;
   shared_ptr<SDFMap> sdf_map_;
@@ -68,6 +73,10 @@ public:
   // 新增：目标点相关成员
   geometry_msgs::PointStamped target_point_;
   bool has_target_ = false;
+  Eigen::Vector3d current_pos_;
+  Eigen::Vector3d current_vel_;
+  Eigen::Vector3d current_yaw_;
+  double target_area_radius_ = 2.0; // 默認值，可通過參數加載
 };
 
 }  // namespace fast_planner
