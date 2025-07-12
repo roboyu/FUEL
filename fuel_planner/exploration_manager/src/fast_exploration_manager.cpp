@@ -34,6 +34,25 @@ FastExplorationManager::~FastExplorationManager() {
   ViewNode::map_.reset();
 }
 
+void FastExplorationManager::setCurrentPose(const Eigen::Vector3d& pos, const Eigen::Vector3d& vel, const Eigen::Vector3d& yaw) {
+  current_pos_ = pos;
+  current_vel_ = vel;
+  current_yaw_ = yaw;
+}
+
+bool FastExplorationManager::isNearTargetArea(const Eigen::Vector3d& current_pos, const Eigen::Vector3d& target_center, double radius) const {
+  return (current_pos - target_center).norm() < radius;
+}
+
+bool FastExplorationManager::findBestHoverPoint(const Eigen::Vector3d& target_center, double search_radius, Eigen::Vector3d& best_point) {
+  ROS_WARN("Placeholder: Searching for best hover point...");
+  // TODO: 在這裡實現詳細的搜尋邏輯
+  // 目前直接返回目標點作為懸停點
+  best_point = target_center;
+  ROS_WARN("Placeholder: Found a potential hover point.");
+  return true;
+}
+
 void FastExplorationManager::initialize(ros::NodeHandle& nh) {
   planner_manager_.reset(new FastPlannerManager);
   planner_manager_->initPlanModules(nh);
@@ -52,6 +71,7 @@ void FastExplorationManager::initialize(ros::NodeHandle& nh) {
   nh.param("exploration/max_decay", ep_->max_decay_, -1.0);
   nh.param("exploration/tsp_dir", ep_->tsp_dir_, string("null"));
   nh.param("exploration/relax_time", ep_->relax_time_, 1.0);
+  nh.param("exploration/target_area_radius", target_area_radius_, 2.0);
 
   nh.param("exploration/vm", ViewNode::vm_, -1.0);
   nh.param("exploration/am", ViewNode::am_, -1.0);
@@ -104,12 +124,26 @@ int FastExplorationManager::planExploreMotion(
     const Vector3d& pos, const Vector3d& vel, const Vector3d& acc, const Vector3d& yaw) {
   // === 根據是否有目標點，選擇不同的探索策略 ===
   if (hasTarget()) {
-    // ******** 目標引導探索/目標區域導航邏輯 ********
-    ROS_WARN("Executing target-guided exploration logic...");
+    setCurrentPose(pos, vel, yaw);
     Eigen::Vector3d target_area_center = getTargetPosition();
-    ROS_WARN("Planning towards target: %.2f, %.2f, %.2f", target_area_center.x(), target_area_center.y(), target_area_center.z());
-    // TODO: 這裡將來會調用真正的目標導向規劃器
-    return SUCCEED; // 先返回 SUCCEED，讓流程能繼續
+    if (isNearTargetArea(current_pos_, target_area_center, target_area_radius_)) {
+      ROS_WARN("Inside target area. Searching for best hover point...");
+      Eigen::Vector3d hover_point;
+      if (findBestHoverPoint(target_area_center, target_area_radius_, hover_point)) {
+        ROS_WARN_STREAM("Best hover point found at: " << hover_point.transpose());
+        // TODO: 調用 planner_manager_ 規劃到 hover_point 的路徑
+        ROS_WARN("Placeholder: Planning path to hover point...");
+        return SUCCEED;
+      } else {
+        ROS_ERROR("Failed to find a suitable hover point in the target area.");
+        return FAIL;
+      }
+    } else {
+      ROS_WARN("Navigating towards target area...");
+      // TODO: 調用 planner_manager_ 規劃到 target_area_center 的路徑
+      ROS_WARN("Placeholder: Planning path to target area...");
+      return SUCCEED;
+    }
   } else {
     // ******** 傳統自由探索邏輯 ********
     ROS_WARN("Executing free exploration logic...");
