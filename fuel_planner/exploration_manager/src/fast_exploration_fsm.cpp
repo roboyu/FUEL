@@ -108,9 +108,6 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
         fd_->start_yaw_(2) = info->yawdotdot_traj_.evaluateDeBoorT(t_r)[0];
       }
 
-      // 將最新位姿傳遞給Manager
-      expl_manager_->setCurrentPose(fd_->start_pt_, fd_->start_vel_, fd_->start_yaw_);
-
       // Inform traj_server the replanning
       replan_pub_.publish(std_msgs::Empty());
       int res = callExplorationPlanner();
@@ -145,9 +142,6 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
       LocalTrajData* info = &planner_manager_->local_data_;
       double t_cur = (ros::Time::now() - info->start_time_).toSec();
 
-      // 將當前執行狀態下的位姿也傳遞給Manager
-      expl_manager_->setCurrentPose(fd_->odom_pos_, fd_->odom_vel_, Eigen::Vector3d(0.0, 0.0, fd_->odom_yaw_));
-
       // Replan if traj is almost fully executed
       double time_to_end = info->duration_ - t_cur;
       if (time_to_end < fp_->replan_thresh1_) {
@@ -165,16 +159,7 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
       if (t_cur > fp_->replan_thresh3_ && !classic_) {
         transitState(PLAN_TRAJ, "FSM");
         ROS_WARN("Replan: periodic call=======================================");
-        return;
       }
-      // ---- 新增邏輯：響應新的目標點 ----
-      if (expl_manager_->hasTarget() && state_ != PLAN_TRAJ) {
-        Eigen::Vector3d new_target_pos = expl_manager_->getTargetPosition();
-        ROS_WARN_STREAM("New target point received: " << new_target_pos.transpose() << ". Triggering replan for target-guided exploration.");
-        transitState(PLAN_TRAJ, "EXEC_TRAJ_TARGET_RESPONSE");
-        return;
-      }
-      // ---- 新增邏輯結束 ----
       break;
     }
   }
