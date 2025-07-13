@@ -336,7 +336,10 @@ int FastExplorationManager::planExploreMotion(
   } else {
     // ******** 傳統自由探索邏輯 ********
     ROS_WARN("Executing free exploration logic...");
-    return planner_manager_->planExploreMotion(pos, vel, acc, yaw);
+    // 臨時用單點包裝成 vector，實際應用時應用完整路徑
+    std::vector<Eigen::Vector3d> path = {pos};
+    planner_manager_->planExploreTraj(path, vel, acc);
+    return SUCCEED;
   }
 }
 
