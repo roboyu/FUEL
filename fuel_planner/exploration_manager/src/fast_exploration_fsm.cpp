@@ -146,7 +146,7 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
       double t_cur = (ros::Time::now() - info->start_time_).toSec();
 
       // 將當前執行狀態下的位姿也傳遞給Manager
-      expl_manager_->setCurrentPose(fd_->odom_pos_, fd_->odom_vel_, fd_->odom_yaw_);
+      expl_manager_->setCurrentPose(fd_->odom_pos_, fd_->odom_vel_, Eigen::Vector3d(0.0, 0.0, fd_->odom_yaw_));
 
       // Replan if traj is almost fully executed
       double time_to_end = info->duration_ - t_cur;
