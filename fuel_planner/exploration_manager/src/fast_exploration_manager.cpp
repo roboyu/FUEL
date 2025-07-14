@@ -52,7 +52,6 @@ void FastExplorationManager::initialize(ros::NodeHandle& nh) {
   nh.param("exploration/max_decay", ep_->max_decay_, -1.0);
   nh.param("exploration/tsp_dir", ep_->tsp_dir_, string("null"));
   nh.param("exploration/relax_time", ep_->relax_time_, 1.0);
-  nh.param("exploration/survey_radius", ep_->survey_radius_, 5.0); // 新增参数
 
   nh.param("exploration/vm", ViewNode::vm_, -1.0);
   nh.param("exploration/am", ViewNode::am_, -1.0);
@@ -85,9 +84,6 @@ void FastExplorationManager::initialize(ros::NodeHandle& nh) {
   // ofstream fout;
   // fout.open("/home/boboyu/Desktop/RAL_Time/frontier.txt");
   // fout.close();
-  current_mode_ = IDLE;
-  next_waypoint_idx_ = 0;
-  survey_waypoints_.clear();
 }
 
 void FastExplorationManager::setTargetPoint(const geometry_msgs::PointStamped& pt) {
@@ -104,20 +100,6 @@ Eigen::Vector3d FastExplorationManager::getTargetPosition() const {
   return Eigen::Vector3d(target_point_.point.x, target_point_.point.y, target_point_.point.z);
 }
 
-// 1. 在文件顶部添加环扫模式枚举和成员变量（建议在类定义中，但此处先在cpp实现，后续可移到.h）
-namespace {
-    enum SurveyMode {
-        IDLE = 0,
-        SURVEY_CIRCLE_SCAN = 1,
-        DECISION_MAKING = 2,
-        FINAL_MANEUVER = 3
-    };
-}
-// 删除static定义（已移到.h成员变量）
-// static SurveyMode current_mode_ = IDLE;
-// static std::vector<Eigen::Vector3d> survey_waypoints_;
-// static int next_waypoint_idx_ = 0;
-
 int FastExplorationManager::planExploreMotion(
     const Vector3d& pos, const Vector3d& vel, const Vector3d& acc, const Vector3d& yaw) {
   ros::Time t1 = ros::Time::now();
@@ -130,168 +112,112 @@ int FastExplorationManager::planExploreMotion(
 
   // =================== 任务逻辑分流 ===================
   if (this->hasTarget()) {
+    // ========== 新逻辑入口：混合引导探索 =============
+    const double SURVEY_RADIUS = 5.0; // 勘探半径
     Vector3d target_pos = this->getTargetPosition();
     double dist_to_target = (pos - target_pos).norm();
 
-    // -----------------------------------------------------------------
-    //  PHASE 2: 近距离环扫勘察
-    // -----------------------------------------------------------------
-    // 只要进入半径圈或已经在环扫模式，就执行环扫逻辑
-    if (dist_to_target <= ep_->survey_radius_ || current_mode_ == SURVEY_CIRCLE_SCAN) {
-        // 初始化 (只执行一次)
-        if (current_mode_ != SURVEY_CIRCLE_SCAN) {
-            current_mode_ = SURVEY_CIRCLE_SCAN;
-            survey_waypoints_.clear();
-            next_waypoint_idx_ = 0;
-            const int N = 12;
-            double radius = ep_->survey_radius_;
-            double z_survey = target_pos.z() + 1.0;
-            double theta0 = atan2(pos.y() - target_pos.y(), pos.x() - target_pos.x());
-            for (int i = 0; i < N; ++i) {
-                double theta = theta0 + i * 2 * M_PI / N;
-                survey_waypoints_.emplace_back(target_pos.x() + radius * cos(theta), 
-                                             target_pos.y() + radius * sin(theta), 
-                                             z_survey);
-            }
-            ROS_INFO("[模式切换] 进入环扫模式，已生成%d个航点。", N);
-        }
+    // Step 1: 远距离混合引导探索
+    if (dist_to_target > SURVEY_RADIUS) {
+      // 保留前沿点检测与候选视点生成
+      frontier_finder_->searchFrontiers();
+      frontier_finder_->computeFrontiersToVisit();
+      frontier_finder_->getFrontiers(ed_->frontiers_);
+      frontier_finder_->getFrontierBoxes(ed_->frontier_boxes_);
+      frontier_finder_->getDormantFrontiers(ed_->dead_frontiers_);
 
-        // 检查环扫任务是否完成
-        if (next_waypoint_idx_ >= survey_waypoints_.size()) {
-            ROS_INFO_ONCE("[环扫模式] 所有航点已飞完，环扫结束。等待下一步决策指令。");
-            current_mode_ = DECISION_MAKING;
-            return NO_FRONTIER;
-        }
+      if (ed_->frontiers_.empty()) {
+        ROS_WARN("No coverable frontier.");
+        return NO_FRONTIER;
+      }
+      frontier_finder_->getTopViewpointsInfo(pos, ed_->points_, ed_->yaws_, ed_->averages_);
+      for (int i = 0; i < ed_->points_.size(); ++i)
+        ed_->views_.push_back(
+            ed_->points_[i] + 2.0 * Vector3d(cos(ed_->yaws_[i]), sin(ed_->yaws_[i]), 0));
 
-        // 获取当前目标，并检查是否到达
-        Vector3d current_goal = survey_waypoints_[next_waypoint_idx_];
-        if ((pos - current_goal).norm() < 0.5) {
-            ROS_INFO("[环扫模式] 到达航点 %d。", next_waypoint_idx_);
-            next_waypoint_idx_++;
-            if (next_waypoint_idx_ >= survey_waypoints_.size()) {
-                return SUCCEED;
-            }
+      // Step 2: 视点评分与选择
+      // 权重参数（可后续参数化）
+      const double w_info = 1.0;
+      const double w_target = 2.0;
+      const double w_cost = 1.0;
+      int best_idx = -1;
+      double best_score = -1e9;
+      for (int i = 0; i < ed_->points_.size(); ++i) {
+        // 信息增益（这里用averages_，可根据实际定义）
+        double info_gain = (i < ed_->averages_.size()) ? ed_->averages_[i].norm() : 0.0;
+        // 目标导向分
+        Eigen::Vector3d A = ed_->points_[i] - pos;
+        Eigen::Vector3d B = target_pos - pos;
+        double target_progress = 0.0;
+        if (A.norm() > 1e-3 && B.norm() > 1e-3) {
+          target_progress = A.normalized().dot(B.normalized());
         }
-
-        // 只要任务未完成，就驱动无人机飞向当前(或下一个)目标
-        Vector3d next_pos = survey_waypoints_[next_waypoint_idx_];
-        double next_yaw = yaw[0]; // 保持当前朝向
-        ROS_INFO_THROTTLE(1.0, "[环扫模式] 飞向航点 %d...", next_waypoint_idx_);
-
-        // --- 复用轨迹生成逻辑 ---
-        double time_lb = 0.5;
-        planner_manager_->path_finder_->reset();
-        if (planner_manager_->path_finder_->search(pos, next_pos) != Astar::REACH_END) {
-            ROS_ERROR("[环扫模式] 无法规划到下一个航点 %d", next_waypoint_idx_);
-            return FAIL;
+        // 飞行代价（距离）
+        double travel_cost = A.norm();
+        // 综合评分
+        double score = w_info * info_gain + w_target * target_progress - w_cost * travel_cost;
+        if (score > best_score) {
+          best_score = score;
+          best_idx = i;
         }
-        ed_->path_next_goal_ = planner_manager_->path_finder_->getPath();
-        shortenPath(ed_->path_next_goal_);
+      }
+      if (best_idx < 0) {
+        ROS_WARN("No valid viewpoint found in guided exploration.");
+        return FAIL;
+      }
+      Vector3d next_pos = ed_->points_[best_idx];
+      double next_yaw = ed_->yaws_[best_idx];
+      // 后续轨迹生成与原逻辑一致
+      // ... 轨迹生成代码 ...
+      // 复制原有的轨迹生成部分
+      t1 = ros::Time::now();
+      double diff = fabs(next_yaw - yaw[0]);
+      double time_lb = std::min(diff, 2 * M_PI - diff) / ViewNode::yd_;
+      planner_manager_->path_finder_->reset();
+      if (planner_manager_->path_finder_->search(pos, next_pos) != Astar::REACH_END) {
+        ROS_ERROR("No path to next viewpoint");
+        return FAIL;
+      }
+      ed_->path_next_goal_ = planner_manager_->path_finder_->getPath();
+      shortenPath(ed_->path_next_goal_);
+      const double radius_far = 5.0;
+      const double radius_close = 1.5;
+      const double len = Astar::pathLength(ed_->path_next_goal_);
+      if (len < radius_close) {
         planner_manager_->planExploreTraj(ed_->path_next_goal_, vel, acc, time_lb);
         ed_->next_goal_ = next_pos;
-        planner_manager_->planYawExplore(yaw, next_yaw, true, ep_->relax_time_);
-        return SUCCEED;
-    }
-    // -----------------------------------------------------------------
-    //  PHASE 1: 远距离引导
-    // -----------------------------------------------------------------
-    else {
-        // ========== 新逻辑入口：混合引导探索 =============
-        // 保留前沿点检测与候选视点生成
-        frontier_finder_->searchFrontiers();
-        frontier_finder_->computeFrontiersToVisit();
-        frontier_finder_->getFrontiers(ed_->frontiers_);
-        frontier_finder_->getFrontierBoxes(ed_->frontier_boxes_);
-        frontier_finder_->getDormantFrontiers(ed_->dead_frontiers_);
-
-        if (ed_->frontiers_.empty()) {
-          ROS_WARN("No coverable frontier.");
-          return NO_FRONTIER;
+      } else if (len > radius_far) {
+        double len2 = 0.0;
+        vector<Eigen::Vector3d> truncated_path = { ed_->path_next_goal_.front() };
+        for (int i = 1; i < ed_->path_next_goal_.size() && len2 < radius_far; ++i) {
+          auto cur_pt = ed_->path_next_goal_[i];
+          len2 += (cur_pt - truncated_path.back()).norm();
+          truncated_path.push_back(cur_pt);
         }
-        frontier_finder_->getTopViewpointsInfo(pos, ed_->points_, ed_->yaws_, ed_->averages_);
-        for (int i = 0; i < ed_->points_.size(); ++i)
-          ed_->views_.push_back(
-              ed_->points_[i] + 2.0 * Vector3d(cos(ed_->yaws_[i]), sin(ed_->yaws_[i]), 0));
-
-        // Step 2: 视点评分与选择
-        // 权重参数（可后续参数化）
-        const double w_info = 1.0;
-        const double w_target = 2.0;
-        const double w_cost = 1.0;
-        int best_idx = -1;
-        double best_score = -1e9;
-        for (int i = 0; i < ed_->points_.size(); ++i) {
-          // 信息增益（这里用averages_，可根据实际定义）
-          double info_gain = (i < ed_->averages_.size()) ? ed_->averages_[i].norm() : 0.0;
-          // 目标导向分
-          Eigen::Vector3d A = ed_->points_[i] - pos;
-          Eigen::Vector3d B = target_pos - pos;
-          double target_progress = 0.0;
-          if (A.norm() > 1e-3 && B.norm() > 1e-3) {
-            target_progress = A.normalized().dot(B.normalized());
-          }
-          // 飞行代价（距离）
-          double travel_cost = A.norm();
-          // 综合评分
-          double score = w_info * info_gain + w_target * target_progress - w_cost * travel_cost;
-          if (score > best_score) {
-            best_score = score;
-            best_idx = i;
-          }
-        }
-        if (best_idx < 0) {
-          ROS_WARN("No valid viewpoint found in guided exploration.");
+        ed_->next_goal_ = truncated_path.back();
+        planner_manager_->planExploreTraj(truncated_path, vel, acc, time_lb);
+      } else {
+        ed_->next_goal_ = next_pos;
+        if (!planner_manager_->kinodynamicReplan(
+                pos, vel, acc, ed_->next_goal_, Vector3d(0, 0, 0), time_lb))
           return FAIL;
-        }
-        Vector3d next_pos = ed_->points_[best_idx];
-        double next_yaw = ed_->yaws_[best_idx];
-        // 后续轨迹生成与原逻辑一致
-        // ... 轨迹生成代码 ...
-        // 复制原有的轨迹生成部分
-        t1 = ros::Time::now();
-        double diff = fabs(next_yaw - yaw[0]);
-        double time_lb = std::min(diff, 2 * M_PI - diff) / ViewNode::yd_;
-        planner_manager_->path_finder_->reset();
-        if (planner_manager_->path_finder_->search(pos, next_pos) != Astar::REACH_END) {
-          ROS_ERROR("No path to next viewpoint");
-          return FAIL;
-        }
-        ed_->path_next_goal_ = planner_manager_->path_finder_->getPath();
-        shortenPath(ed_->path_next_goal_);
-        const double radius_far = 5.0;
-        const double radius_close = 1.5;
-        const double len = Astar::pathLength(ed_->path_next_goal_);
-        if (len < radius_close) {
-          planner_manager_->planExploreTraj(ed_->path_next_goal_, vel, acc, time_lb);
-          ed_->next_goal_ = next_pos;
-        } else if (len > radius_far) {
-          double len2 = 0.0;
-          vector<Eigen::Vector3d> truncated_path = { ed_->path_next_goal_.front() };
-          for (int i = 1; i < ed_->path_next_goal_.size() && len2 < radius_far; ++i) {
-            auto cur_pt = ed_->path_next_goal_[i];
-            len2 += (cur_pt - truncated_path.back()).norm();
-            truncated_path.push_back(cur_pt);
-          }
-          ed_->next_goal_ = truncated_path.back();
-          planner_manager_->planExploreTraj(truncated_path, vel, acc, time_lb);
-        } else {
-          ed_->next_goal_ = next_pos;
-          if (!planner_manager_->kinodynamicReplan(
-                  pos, vel, acc, ed_->next_goal_, Vector3d(0, 0, 0), time_lb))
-            return FAIL;
-        }
-        if (planner_manager_->local_data_.position_traj_.getTimeSum() < time_lb - 0.1)
-          ROS_ERROR("Lower bound not satified!");
-        planner_manager_->planYawExplore(yaw, next_yaw, true, ep_->relax_time_);
-        double traj_plan_time = (ros::Time::now() - t1).toSec();
-        t1 = ros::Time::now();
-        double yaw_time = (ros::Time::now() - t1).toSec();
-        ROS_WARN("Traj: %lf, yaw: %lf", traj_plan_time, yaw_time);
-        double total = (ros::Time::now() - t2).toSec();
-        ROS_WARN("Total time: %lf", total);
-        ROS_ERROR_COND(total > 0.1, "Total time too long!!!");
-        return SUCCEED;
+      }
+      if (planner_manager_->local_data_.position_traj_.getTimeSum() < time_lb - 0.1)
+        ROS_ERROR("Lower bound not satified!");
+      planner_manager_->planYawExplore(yaw, next_yaw, true, ep_->relax_time_);
+      double traj_plan_time = (ros::Time::now() - t1).toSec();
+      t1 = ros::Time::now();
+      double yaw_time = (ros::Time::now() - t1).toSec();
+      ROS_WARN("Traj: %lf, yaw: %lf", traj_plan_time, yaw_time);
+      double total = (ros::Time::now() - t2).toSec();
+      ROS_WARN("Total time: %lf", total);
+      ROS_ERROR_COND(total > 0.1, "Total time too long!!!");
+      return SUCCEED;
     }
+    // Step 3: 近距离（勘探半径内）后续可扩展为精细扫描/投放点决策
+    // 目前暂时不做处理，直接返回NO_FRONTIER
+    ROS_INFO("Arrived at survey radius, ready for fine survey/decision (待实现)");
+    return NO_FRONTIER;
   } else {
     // ========== 原始FUEL探索逻辑 =============
     // 直接复用原有逻辑
