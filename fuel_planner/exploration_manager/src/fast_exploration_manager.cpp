@@ -100,6 +100,19 @@ Eigen::Vector3d FastExplorationManager::getTargetPosition() const {
   return Eigen::Vector3d(target_point_.point.x, target_point_.point.y, target_point_.point.z);
 }
 
+// 1. 在文件顶部添加环扫模式枚举和成员变量（建议在类定义中，但此处先在cpp实现，后续可移到.h）
+namespace {
+    enum SurveyMode {
+        IDLE = 0,
+        SURVEY_CIRCLE_SCAN = 1,
+        DECISION_MAKING = 2,
+        FINAL_MANEUVER = 3
+    };
+}
+static SurveyMode current_mode_ = IDLE;
+static std::vector<Eigen::Vector3d> survey_waypoints_;
+static int next_waypoint_idx_ = 0;
+
 int FastExplorationManager::planExploreMotion(
     const Vector3d& pos, const Vector3d& vel, const Vector3d& acc, const Vector3d& yaw) {
   ros::Time t1 = ros::Time::now();
@@ -213,6 +226,34 @@ int FastExplorationManager::planExploreMotion(
       ROS_WARN("Total time: %lf", total);
       ROS_ERROR_COND(total > 0.1, "Total time too long!!!");
       return SUCCEED;
+    }
+    // Step 3: 近距离（勘探半径内）后续可扩展为精细扫描/投放点决策
+    if (dist_to_target <= SURVEY_RADIUS) {
+      if (current_mode_ != SURVEY_CIRCLE_SCAN) {
+        // 切换到环扫模式
+        current_mode_ = SURVEY_CIRCLE_SCAN;
+        survey_waypoints_.clear();
+        next_waypoint_idx_ = 0;
+        // 生成圆周航点
+        const int N = 12; // 12等分
+        double radius = SURVEY_RADIUS;
+        double z_survey = target_pos.z() + 1.0; // 勘察高度
+        double theta0 = atan2(pos.y() - target_pos.y(), pos.x() - target_pos.x());
+        for (int i = 0; i < N; ++i) {
+          double theta = theta0 + i * 2 * M_PI / N;
+          double x = target_pos.x() + radius * cos(theta);
+          double y = target_pos.y() + radius * sin(theta);
+          survey_waypoints_.emplace_back(x, y, z_survey);
+        }
+        ROS_INFO("[环扫模式] 已生成%d个圆周航点，勘察高度%.2f米", N, z_survey);
+        for (int i = 0; i < N; ++i) {
+          ROS_INFO("航点%d: (%.2f, %.2f, %.2f)", i, survey_waypoints_[i].x(), survey_waypoints_[i].y(), survey_waypoints_[i].z());
+        }
+        // 暂不做飞行和建图，直接返回
+        return NO_FRONTIER;
+      }
+      // 后续环扫飞行与建图逻辑待实现
+      return NO_FRONTIER;
     }
     // Step 3: 近距离（勘探半径内）后续可扩展为精细扫描/投放点决策
     // 目前暂时不做处理，直接返回NO_FRONTIER
