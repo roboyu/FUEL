@@ -197,7 +197,6 @@ int FastExplorationManager::planExploreMotion(
     // -----------------------------------------------------------------
     else {
         // ========== 新逻辑入口：混合引导探索 =============
-        const double SURVEY_RADIUS = 5.0; // 勘探半径
         // 保留前沿点检测与候选视点生成
         frontier_finder_->searchFrontiers();
         frontier_finder_->computeFrontiersToVisit();
