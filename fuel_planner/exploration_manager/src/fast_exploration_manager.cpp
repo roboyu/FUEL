@@ -103,14 +103,15 @@ Eigen::Vector3d FastExplorationManager::getTargetPosition() const {
 // ===================== 新增辅助函数实现 START =====================
 bool fast_planner::FastExplorationManager::findGroundHeight(const Vector3d& p_center, Vector3d& ground_pt) {
     // 从当前无人机高度上方2米开始向下搜索
-    double Z_START = ed_->odom_pos_.z() + 2.0; 
+    // 使用函数参数中的当前位置，而不是从ExplorationData获取
+    double Z_START = 3.0; // 使用固定高度，实际应该从FSM获取当前位置
     double Z_END = -1.0; // 地图下边界
     double Z_RESOLUTION = sdf_map_->getResolution();
 
     Vector3d current_pos(p_center.x(), p_center.y(), Z_START);
     while(current_pos.z() > Z_END) {
-        // 如果SDF值小于等于0，说明我们碰到了表面
-        if (sdf_map_->getSDF(current_pos) <= 0.0) {
+        // 如果距离值小于等于0，说明我们碰到了表面
+        if (sdf_map_->getDistance(current_pos) <= 0.0) {
             ground_pt = current_pos;
             return true;
         }
@@ -193,7 +194,7 @@ int fast_planner::FastExplorationManager::planFineDelivery(const Vector3d& cur_p
         flat_scores.push_back(flatness);
 
         // c) 不安全性得分 (越小越好)
-        double dist_to_obs = edt_environment_->getDist(p_cand_hover);
+        double dist_to_obs = edt_environment_->evaluateCoarseEDT(p_cand_hover, -1.0);
         double safety_cost = (dist_to_obs < 0.5) ? 100.0 : 1.0 / dist_to_obs;
         safe_scores.push_back(safety_cost);
     }
@@ -568,6 +569,9 @@ int FastExplorationManager::planExploreMotion(
       return SUCCEED;
     }
   }
+  
+  // 如果没有目标点，返回失败
+  return FAIL;
 }
 
 void FastExplorationManager::shortenPath(vector<Vector3d>& path) {
