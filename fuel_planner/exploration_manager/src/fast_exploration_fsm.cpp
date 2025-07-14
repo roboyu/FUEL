@@ -113,6 +113,9 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
       int res = callExplorationPlanner();
       if (res == SUCCEED) {
         transitState(PUB_TRAJ, "FSM");
+      } else if (res == FINAL_GOAL_FOUND) {
+        ROS_INFO("[FSM] Final goal found! Switching to FINAL_HOVER state.");
+        transitState(FINAL_HOVER, "FSM");
       } else if (res == NO_FRONTIER) {
         transitState(FINISH, "FSM");
         fd_->static_state_ = true;
@@ -160,6 +163,14 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
         transitState(PLAN_TRAJ, "FSM");
         ROS_WARN("Replan: periodic call=======================================");
       }
+      break;
+    }
+    case FINAL_HOVER: {
+      // 在这个状态下，无人机不应再进行任何探索规划
+      // 它会执行最后一段飞向最佳悬停点的轨迹，然后悬停
+      // 可以在此监控无人机是否稳定，或者等待外部指令进行投放
+      // 简单实现：什么都不做，让它保持悬停
+      ROS_INFO_THROTTLE(1.0, "[FSM] Hovering at final delivery spot.");
       break;
     }
   }
