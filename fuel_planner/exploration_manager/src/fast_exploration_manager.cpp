@@ -136,17 +136,16 @@ int FastExplorationManager::planExploreMotion(
     // -----------------------------------------------------------------
     //  PHASE 2: 近距离环扫勘察
     // -----------------------------------------------------------------
-    // 触发条件：一旦进入半径圈，或者已经处于环扫模式，就执行此逻辑块
+    // 只要进入半径圈或已经在环扫模式，就执行环扫逻辑
     if (dist_to_target <= ep_->survey_radius_ || current_mode_ == SURVEY_CIRCLE_SCAN) {
-
-        // 2.1: 首次进入，执行一次性初始化
+        // 初始化 (只执行一次)
         if (current_mode_ != SURVEY_CIRCLE_SCAN) {
             current_mode_ = SURVEY_CIRCLE_SCAN;
             survey_waypoints_.clear();
             next_waypoint_idx_ = 0;
             const int N = 12;
             double radius = ep_->survey_radius_;
-            double z_survey = target_pos.z() + 1.0; // 建议用+1.0米
+            double z_survey = target_pos.z() + 1.0;
             double theta0 = atan2(pos.y() - target_pos.y(), pos.x() - target_pos.x());
             for (int i = 0; i < N; ++i) {
                 double theta = theta0 + i * 2 * M_PI / N;
@@ -157,26 +156,24 @@ int FastExplorationManager::planExploreMotion(
             ROS_INFO("[模式切换] 进入环扫模式，已生成%d个航点。", N);
         }
 
-        // 2.2: 检查环扫任务是否完成
+        // 检查环扫任务是否完成
         if (next_waypoint_idx_ >= survey_waypoints_.size()) {
             ROS_INFO_ONCE("[环扫模式] 所有航点已飞完，环扫结束。等待下一步决策指令。");
-            current_mode_ = DECISION_MAKING; // 切换到下一模式
-            // TODO: 在此悬停，等待决策逻辑
-            return NO_FRONTIER; 
+            current_mode_ = DECISION_MAKING;
+            return NO_FRONTIER;
         }
-        
-        // 2.3: 获取当前目标，并检查是否到达
+
+        // 获取当前目标，并检查是否到达
         Vector3d current_goal = survey_waypoints_[next_waypoint_idx_];
-        if ((pos - current_goal).norm() < 0.5 /*到达阈值*/) {
+        if ((pos - current_goal).norm() < 0.5) {
             ROS_INFO("[环扫模式] 到达航点 %d。", next_waypoint_idx_);
             next_waypoint_idx_++;
-            // 如果刚刚完成了最后一个点，直接返回，下一轮循环会处理完成状态
             if (next_waypoint_idx_ >= survey_waypoints_.size()) {
-                return SUCCEED; // 或NO_FRONTIER
+                return SUCCEED;
             }
         }
 
-        // 2.4: 只要任务未完成，就驱动无人机飞向当前(或下一个)目标
+        // 只要任务未完成，就驱动无人机飞向当前(或下一个)目标
         Vector3d next_pos = survey_waypoints_[next_waypoint_idx_];
         double next_yaw = yaw[0]; // 保持当前朝向
         ROS_INFO_THROTTLE(1.0, "[环扫模式] 飞向航点 %d...", next_waypoint_idx_);
@@ -193,12 +190,10 @@ int FastExplorationManager::planExploreMotion(
         planner_manager_->planExploreTraj(ed_->path_next_goal_, vel, acc, time_lb);
         ed_->next_goal_ = next_pos;
         planner_manager_->planYawExplore(yaw, next_yaw, true, ep_->relax_time_);
-        
         return SUCCEED;
     }
-
     // -----------------------------------------------------------------
-    //  PHASE 1: 远距离引导 (如果还没进入近距离阶段，就执行这个)
+    //  PHASE 1: 远距离引导
     // -----------------------------------------------------------------
     else {
         // ========== 新逻辑入口：混合引导探索 =============
