@@ -233,31 +233,68 @@ int FastExplorationManager::planExploreMotion(
     }
     // Step 3: 近距离（勘探半径内）后续可扩展为精细扫描/投放点决策
     if (dist_to_target <= SURVEY_RADIUS) {
-      if (current_mode_ != SURVEY_CIRCLE_SCAN) {
-        // 切换到环扫模式
-        current_mode_ = SURVEY_CIRCLE_SCAN;
-        survey_waypoints_.clear();
-        next_waypoint_idx_ = 0;
-        // 生成圆周航点
-        const int N = 12; // 12等分
-        double radius = SURVEY_RADIUS;
-        double z_survey = target_pos.z() + 1.0; // 勘察高度
-        double theta0 = atan2(pos.y() - target_pos.y(), pos.x() - target_pos.x());
-        for (int i = 0; i < N; ++i) {
-          double theta = theta0 + i * 2 * M_PI / N;
-          double x = target_pos.x() + radius * cos(theta);
-          double y = target_pos.y() + radius * sin(theta);
-          survey_waypoints_.emplace_back(x, y, z_survey);
+        if (current_mode_ == SURVEY_CIRCLE_SCAN) {
+            // 1. 检查是否所有航点已飞完
+            if (next_waypoint_idx_ >= static_cast<int>(survey_waypoints_.size())) {
+                ROS_INFO("[环扫模式] 所有航点已飞完，切换到决策阶段");
+                current_mode_ = DECISION_MAKING;
+                return NO_FRONTIER;
+            }
+            // 2. 取当前目标航点
+            Eigen::Vector3d target_wp = survey_waypoints_[next_waypoint_idx_];
+            double dist_to_wp = (pos - target_wp).norm();
+            // 3. 判断是否到达当前航点
+            const double WP_REACH_THRESH = 0.5; // 到达阈值
+            if (dist_to_wp < WP_REACH_THRESH) {
+                ROS_INFO("[环扫模式] 已到达航点%d: (%.2f, %.2f, %.2f)", next_waypoint_idx_, target_wp.x(), target_wp.y(), target_wp.z());
+                next_waypoint_idx_++;
+                // 再次检查是否全部完成
+                if (next_waypoint_idx_ >= static_cast<int>(survey_waypoints_.size())) {
+                    ROS_INFO("[环扫模式] 所有航点已飞完，切换到决策阶段");
+                    current_mode_ = DECISION_MAKING;
+                    return NO_FRONTIER;
+                }
+                target_wp = survey_waypoints_[next_waypoint_idx_];
+            }
+            // 4. 调用轨迹生成模块，飞向当前目标航点
+            // 轨迹生成与原有逻辑一致
+            double diff = fabs(yaw[0]); // 这里暂时不考虑yaw目标
+            double time_lb = 0.5; // 给一个最小时间
+            planner_manager_->path_finder_->reset();
+            if (planner_manager_->path_finder_->search(pos, target_wp) != Astar::REACH_END) {
+                ROS_ERROR("[环扫模式] 无法规划到下一个环扫航点");
+                return FAIL;
+            }
+            ed_->path_next_goal_ = planner_manager_->path_finder_->getPath();
+            shortenPath(ed_->path_next_goal_);
+            planner_manager_->planExploreTraj(ed_->path_next_goal_, vel, acc, time_lb);
+            ed_->next_goal_ = target_wp;
+            planner_manager_->planYawExplore(yaw, 0.0, true, ep_->relax_time_);
+            ROS_INFO("[环扫模式] 正在飞向航点%d: (%.2f, %.2f, %.2f)", next_waypoint_idx_, target_wp.x(), target_wp.y(), target_wp.z());
+            return SUCCEED;
         }
-        ROS_INFO("[环扫模式] 已生成%d个圆周航点，勘察高度%.2f米", N, z_survey);
-        for (int i = 0; i < N; ++i) {
-          ROS_INFO("航点%d: (%.2f, %.2f, %.2f)", i, survey_waypoints_[i].x(), survey_waypoints_[i].y(), survey_waypoints_[i].z());
+        // 进入环扫模式的初始化逻辑（只做一次）
+        if (current_mode_ != SURVEY_CIRCLE_SCAN) {
+            current_mode_ = SURVEY_CIRCLE_SCAN;
+            survey_waypoints_.clear();
+            next_waypoint_idx_ = 0;
+            const int N = 12;
+            double radius = SURVEY_RADIUS;
+            double z_survey = target_pos.z() + 1.0;
+            double theta0 = atan2(pos.y() - target_pos.y(), pos.x() - target_pos.x());
+            for (int i = 0; i < N; ++i) {
+                double theta = theta0 + i * 2 * M_PI / N;
+                double x = target_pos.x() + radius * cos(theta);
+                double y = target_pos.y() + radius * sin(theta);
+                survey_waypoints_.emplace_back(x, y, z_survey);
+            }
+            ROS_INFO("[环扫模式] 已生成%d个圆周航点，勘察高度%.2f米", N, z_survey);
+            for (int i = 0; i < N; ++i) {
+                ROS_INFO("航点%d: (%.2f, %.2f, %.2f)", i, survey_waypoints_[i].x(), survey_waypoints_[i].y(), survey_waypoints_[i].z());
+            }
+            return NO_FRONTIER;
         }
-        // 暂不做飞行和建图，直接返回
         return NO_FRONTIER;
-      }
-      // 后续环扫飞行与建图逻辑待实现
-      return NO_FRONTIER;
     }
     // Step 3: 近距离（勘探半径内）后续可扩展为精细扫描/投放点决策
     // 目前暂时不做处理，直接返回NO_FRONTIER
