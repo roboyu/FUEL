@@ -135,6 +135,13 @@ int FastExplorationManager::planExploreMotion(
         ed_->views_.push_back(
             ed_->points_[i] + 2.0 * Vector3d(cos(ed_->yaws_[i]), sin(ed_->yaws_[i]), 0));
 
+      // ===================== FIX: START =====================
+      // 保持FrontierFinder内部状态同步，防止后续定时器回调崩溃
+      if (!ed_->points_.empty()) {
+        frontier_finder_->updateFrontierCostMatrix();
+      }
+      // ===================== FIX: END =======================
+
       // Step 2: 视点评分与选择
       // 权重参数（可后续参数化）
       const double w_info = 1.0;
