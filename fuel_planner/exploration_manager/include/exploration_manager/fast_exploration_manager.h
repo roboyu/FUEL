@@ -51,17 +51,6 @@ private:
   shared_ptr<EDTEnvironment> edt_environment_;
   shared_ptr<SDFMap> sdf_map_;
 
-  enum SurveyMode {
-    IDLE = 0,
-    SURVEY_CIRCLE_SCAN = 1,
-    DECISION_MAKING = 2,
-    FINAL_MANEUVER = 3
-  };
-
-  SurveyMode current_mode_;
-  std::vector<Eigen::Vector3d> survey_waypoints_;
-  int next_waypoint_idx_;
-
   // Find optimal tour for coarse viewpoints of all frontiers
   void findGlobalTour(const Vector3d& cur_pos, const Vector3d& cur_vel, const Vector3d cur_yaw,
                       vector<int>& indices);
