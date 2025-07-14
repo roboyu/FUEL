@@ -84,6 +84,9 @@ void FastExplorationManager::initialize(ros::NodeHandle& nh) {
   // ofstream fout;
   // fout.open("/home/boboyu/Desktop/RAL_Time/frontier.txt");
   // fout.close();
+  current_mode_ = IDLE;
+  next_waypoint_idx_ = 0;
+  survey_waypoints_.clear();
 }
 
 void FastExplorationManager::setTargetPoint(const geometry_msgs::PointStamped& pt) {
@@ -109,9 +112,10 @@ namespace {
         FINAL_MANEUVER = 3
     };
 }
-static SurveyMode current_mode_ = IDLE;
-static std::vector<Eigen::Vector3d> survey_waypoints_;
-static int next_waypoint_idx_ = 0;
+// 删除static定义（已移到.h成员变量）
+// static SurveyMode current_mode_ = IDLE;
+// static std::vector<Eigen::Vector3d> survey_waypoints_;
+// static int next_waypoint_idx_ = 0;
 
 int FastExplorationManager::planExploreMotion(
     const Vector3d& pos, const Vector3d& vel, const Vector3d& acc, const Vector3d& yaw) {
