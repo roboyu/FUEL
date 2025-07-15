@@ -379,18 +379,21 @@ int FastExplorationManager::planExploreMotion(
       return SUCCEED;
     } else {
       // ========== 近距离精细规划模式 =============
-      ROS_INFO("[Manager] Switched to fine delivery planning mode. Distance to target: %.2f m", dist_to_target);
+      ROS_INFO("[Manager] Near target (%.2f m), switching to fine delivery planning mode.", dist_to_target);
       
-      // 直接调用精细投放规划函数
+      // ====================== 核心修复 1 ======================
+      // 直接返回 planFineDelivery 的结果，不要用 SUCCEED 替换它！
       int delivery_result = this->planFineDelivery(pos, vel, acc);
-      
+
+      // （可选）根据结果打印不同的日志，但一定要返回原始结果
       if (delivery_result == FINAL_GOAL_FOUND) {
-        ROS_INFO("[Manager] Fine delivery planning completed successfully.");
-        return SUCCEED;
+        ROS_INFO("[Manager] Fine delivery planning indicates final goal has been found.");
       } else {
         ROS_ERROR("[Manager] Fine delivery planning failed with result: %d", delivery_result);
-        return FAIL;
       }
+      
+      return delivery_result; // <<<<----- 这是关键！
+      // =======================================================
     }
   }
   
