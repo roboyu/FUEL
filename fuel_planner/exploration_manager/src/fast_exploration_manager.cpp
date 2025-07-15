@@ -240,8 +240,16 @@ int fast_planner::FastExplorationManager::planFineDelivery(const Vector3d& cur_p
     // 如果距离很近，就不需要复杂的轨迹规划了
     if ((cur_pos - final_hover_goal).norm() < 0.3) {
         // 让FSM知道我们已经到了
+        ROS_INFO("[Delivery] Already close to final goal, no trajectory planning needed.");
     } else {
+        // Step 1: 创建一个包含起点和终点的基本路径
         vector<Vector3d> path_to_final = { cur_pos, final_hover_goal };
+        
+        // Step 2: 调用现有的工具函数来处理路径，它会自动添加中间点
+        shortenPath(path_to_final);
+        
+        // Step 3: 将处理好的路径传递给规划器
+        ROS_INFO("[Delivery] Planning trajectory with %zu waypoints", path_to_final.size());
         planner_manager_->planExploreTraj(path_to_final, cur_vel, cur_acc, 0.0);
     }
 
