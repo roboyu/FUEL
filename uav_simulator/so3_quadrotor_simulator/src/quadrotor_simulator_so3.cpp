@@ -254,7 +254,7 @@ int main(int argc, char** argv) {
   n.param("rod_bubble_radius", rod_bubble_radius, 0.05);
   n.param("rod_length", rod_length, 1.0);
   n.param("rod_bubble_num", rod_bubble_num, 5);
-  n.param("dist0", dist0, 0.0); // 默认为0，建议与优化器一致
+  n.param("dist0", dist0, 0.7); // 默认为0.7，建议与优化器一致
 
   // ESDF Map initialization
   edt_environment_.reset(new fast_planner::EDTEnvironment());
