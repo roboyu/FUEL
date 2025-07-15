@@ -33,7 +33,7 @@ void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/ld_view", ld_view_, -1.0);
   nh.param("optimization/ld_time", ld_time_, -1.0);
 
-  nh.param("optimization/dist0", dist0_, 0.0);
+  nh.param("optimization/dist0", dist0_, 0.3);
   nh.param("optimization/max_vel", max_vel_, -1.0);
   nh.param("optimization/max_acc", max_acc_, -1.0);
   nh.param("optimization/dlmin", dlmin_, -1.0);
