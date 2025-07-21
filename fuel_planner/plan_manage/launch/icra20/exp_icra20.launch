@@ -89,7 +89,7 @@
     <param name="astar/lambda_heu" value="10.0" type="double"/>
     <param name="astar/resolution_astar" value="0.1" type="double"/>
     <param name="astar/time_resolution" value="0.8" type="double"/>
-    <param name="astar/margin" value="0" type="double"/>
+    <param name="astar/margin" value="0.1" type="double"/>
     <param name="astar/allocate_num" value="100000" type="int"/>
 
   <!-- topology path finding -->
