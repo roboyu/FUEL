@@ -496,44 +496,42 @@ void BsplineOptimizer::calcTimeCost(const double& dt, double& cost, double& gt) 
 }
 
 void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d>& q, double& cost, std::vector<Eigen::Vector3d>& gradient_q) {
-  // 1. 初始化
+  // 初始化
   cost = 0.0;
   Eigen::Vector3d zero(0, 0, 0);
   std::fill(gradient_q.begin(), gradient_q.end(), zero);
 
-  // 2. 准备常量
-  // 定义世界坐标系下的重力加速度向量 (Z轴向上)
+  // 世界坐标系下的重力加速度向量 (Z轴向上)
   const Eigen::Vector3d gravity_vec(0.0, 0.0, -9.81); 
   const double dt = knot_span_;
-  if (std::abs(dt) < 1e-6) { // 避免除以零
+  if (std::abs(dt) < 1e-6) { 
       return;
   }
   const double dt_sq_inv = 1.0 / (dt * dt);
 
-  // 3. 遍历中间的控制点 (因为加速度估算需要 i-1, i, i+1)
+  // 遍历中间的控制点
   for (int i = 1; i < q.size() - 1; ++i) {
-    // --- 模型构建 ---
-    // a. 无人机位置
+    // 无人机位置
     const Eigen::Vector3d& drone_pos = q[i];
 
-    // b. 无人机加速度估算
+    // 无人机加速度估算
     const Eigen::Vector3d acc_drone = (q[i + 1] - 2 * q[i] + q[i - 1]) * dt_sq_inv;
     
-    // c. 计算从无人机指向负载的杆的方向向量
+    // 从无人机指向负载的杆的方向向量
     Eigen::Vector3d rod_direction = gravity_vec - acc_drone;
     
-    // d. 安全检查并归一化
-    if (rod_direction.squaredNorm() < 1e-8) { // 使用 squaredNorm() 更高效
+    // 安全检查并归一化
+    if (rod_direction.squaredNorm() < 1e-8) { 
         // 加速度恰好抵消重力，或极小，此时默认杆竖直向下
         rod_direction = Eigen::Vector3d(0.0, 0.0, -1.0);
     } else {
         rod_direction.normalize();
     }
 
-    // e. 计算负载和杆上各点的位置
+    // 计算负载和杆上各点的位置
     const Eigen::Vector3d load_pos = drone_pos + rod_direction * rod_length_;
 
-    // --- 创建气泡列表 ---
+    // 创建气泡列表
     std::vector<std::pair<Eigen::Vector3d, double>> bubbles;
     std::vector<double> alphas; // 存储每个气泡的alpha值，用于后续梯度分配
     
@@ -550,7 +548,7 @@ void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d
       alphas.push_back(alpha); // 杆上气泡的alpha
     }
 
-    // --- 代价与梯度计算 ---
+    // 代价与梯度计算
     for (size_t k = 0; k < bubbles.size(); ++k) {
       const auto& bubble = bubbles[k];
       const double alpha = alphas[k]; // 获取对应的alpha值
@@ -565,7 +563,7 @@ void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d
       if (d > 0) {
         cost += std::pow(d, 3);
         
-        // 【【【最精确的梯度分配】】】
+        // 梯度分配
         Eigen::Vector3d cost_grad_on_bubble_pos = 3.0 * std::pow(d, 2) * (-dist_grad);
 
         // 我们知道 bubble_pos = (1-alpha)*drone_pos + alpha*load_pos
