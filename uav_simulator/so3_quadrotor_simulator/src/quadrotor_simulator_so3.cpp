@@ -208,6 +208,7 @@ int main(int argc, char** argv) {
 
   // ROS Publishers and Subscribers
   ros::Publisher odom_pub = n.advertise<nav_msgs::Odometry>("odom", 100);
+  // TODO 球位置发布
   ros::Publisher imu_pub = n.advertise<sensor_msgs::Imu>("imu", 10);
   ros::Subscriber cmd_sub = n.subscribe("cmd", 100, &cmd_callback, ros::TransportHints().tcpNoDelay());
   ros::Subscriber f_sub = n.subscribe("force_disturbance", 100, &force_disturbance_callback,
@@ -321,7 +322,7 @@ int main(int argc, char** argv) {
       if (edt_environment_ && edt_environment_->sdf_map_) {
         dist = edt_environment_->sdf_map_->getDistance(bubble.center);
       }
-      if (dist < bubble.radius + dist0) {
+      if (dist < bubble.radius) {
         frame_collided = true;
         break;
       }
