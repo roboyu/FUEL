@@ -561,10 +561,10 @@ void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d
       double d = dist0_ + bubble.second - dist;
       
       if (d > 0) {
-        cost += std::pow(d, 3);
+        cost += std::exp(d) - 1.0 - d - (d * d) / 2.0;
         
         // 梯度分配
-        Eigen::Vector3d cost_grad_on_bubble_pos = 3.0 * std::pow(d, 2) * (-dist_grad);
+        Eigen::Vector3d cost_grad_on_bubble_pos = (std::exp(d) - 1.0 - d) * (-dist_grad);
 
         // 我们知道 bubble_pos = (1-alpha)*drone_pos + alpha*load_pos
         //                = (1-alpha)*q[i] + alpha*(q[i] + rod_dir*L)
