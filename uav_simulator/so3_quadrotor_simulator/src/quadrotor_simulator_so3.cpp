@@ -321,7 +321,7 @@ int main(int argc, char** argv) {
       if (edt_environment_ && edt_environment_->sdf_map_) {
         dist = edt_environment_->sdf_map_->getDistance(bubble.center);
       }
-      if (dist < bubble.radius + dist0) {
+      if (dist < bubble.radius) {
         frame_collided = true;
         break;
       }
