@@ -176,7 +176,7 @@
     <param name="optimization/ld_waypt" value="0.3" type="double"/>
     <param name="optimization/ld_view" value="0.0" type="double"/>
     <param name="optimization/ld_time" value="1.0" type="double"/>
-    <param name="optimization/dist0" value="0" type="double"/>
+    <param name="optimization/dist0" value="0.7" type="double"/>
     <param name="optimization/max_vel" value="$(arg max_vel)" type="double"/>
     <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>
     <param name="optimization/algorithm1" value="15" type="int"/>
