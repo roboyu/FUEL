@@ -13,6 +13,8 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
 #include <Eigen/Eigen>
+#include <visualization_msgs/Marker.h>
+#include <visualization_msgs/MarkerArray.h>
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -210,6 +212,8 @@ int main(int argc, char** argv) {
   ros::Publisher odom_pub = n.advertise<nav_msgs::Odometry>("odom", 100);
   // TODO 球位置发布
   ros::Publisher imu_pub = n.advertise<sensor_msgs::Imu>("imu", 10);
+  ros::Publisher bubbles_pub = n.advertise<visualization_msgs::MarkerArray>("bubble_markers", 1);
+  ros::Publisher rod_pub = n.advertise<visualization_msgs::Marker>("rod_marker", 1);
   ros::Subscriber cmd_sub = n.subscribe("cmd", 100, &cmd_callback, ros::TransportHints().tcpNoDelay());
   ros::Subscriber f_sub = n.subscribe("force_disturbance", 100, &force_disturbance_callback,
                                       ros::TransportHints().tcpNoDelay());
@@ -331,6 +335,53 @@ int main(int argc, char** argv) {
       collision_count++;
     }
     last_collided = frame_collided;
+
+    // ================== bubbles 绳索rviz可视化 ====================
+    // 1. 气泡可视化，所有气泡都画成透明球体，颜色区分无人机/载荷/绳子
+    visualization_msgs::MarkerArray bubble_arr;
+    for(size_t i = 0; i < bubbles.size(); ++i) {
+      visualization_msgs::Marker marker;
+      marker.header.frame_id = "world"; // 显示在world坐标系，适配你的环境
+      marker.header.stamp = ros::Time::now();
+      marker.ns = "bubbles";
+      marker.id = i;
+      marker.type = visualization_msgs::Marker::SPHERE;
+      marker.action = visualization_msgs::Marker::ADD;
+      marker.pose.position.x = bubbles[i].center.x();
+      marker.pose.position.y = bubbles[i].center.y();
+      marker.pose.position.z = bubbles[i].center.z();
+      marker.pose.orientation.w = 1.0;
+      marker.scale.x = bubbles[i].radius * 2;
+      marker.scale.y = bubbles[i].radius * 2;
+      marker.scale.z = bubbles[i].radius * 2;
+      // 区分颜色：无人机本体0为紫/载荷1为橙，其余为绿色
+      if(i == 0)     { marker.color.r = 0.6; marker.color.g = 0.2; marker.color.b = 1.0; } //无人机
+      else if(i==1)  { marker.color.r = 1.0; marker.color.g = 0.5; marker.color.b = 0.05;} //载荷
+      else           { marker.color.r = 0.2; marker.color.g = 1.0; marker.color.b = 0.2; } //绳气泡
+      marker.color.a = 0.4;
+      marker.lifetime = ros::Duration(0.07);
+      bubble_arr.markers.push_back(marker);
+    }
+    bubbles_pub.publish(bubble_arr);
+    // 2. 绳索可视化（连接无人机本体、绳气泡、载荷气泡)
+    visualization_msgs::Marker rod_marker;
+    rod_marker.header.frame_id = "world";
+    rod_marker.header.stamp = ros::Time::now();
+    rod_marker.ns = "rod";
+    rod_marker.id = 0;
+    rod_marker.type = visualization_msgs::Marker::LINE_STRIP;
+    rod_marker.action = visualization_msgs::Marker::ADD;
+    rod_marker.scale.x = 0.04; //线宽
+    rod_marker.color.r = 1.0;  // 黄色（明显和球区分）
+    rod_marker.color.g = 1.0;
+    rod_marker.color.b = 0.0;
+    rod_marker.color.a = 1.0;
+    rod_marker.lifetime = ros::Duration(0.07);
+    for(const auto& bubble : bubbles) {
+      geometry_msgs::Point pt; pt.x = bubble.center.x(); pt.y = bubble.center.y(); pt.z = bubble.center.z();
+      rod_marker.points.push_back(pt);
+    }
+    rod_pub.publish(rod_marker);
 
     // ROS message publishing
     ros::Time tnow = ros::Time::now();
