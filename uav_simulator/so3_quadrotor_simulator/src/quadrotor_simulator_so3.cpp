@@ -317,13 +317,13 @@ int main(int argc, char** argv) {
       bubbles.push_back({rod_pos, rod_bubble_radius});
     }
     
-    // ==== 新增: RViz可视化气泡和绳子 ====
+    // ==== RViz可视化气泡和绳子（修正版，全部frame_id为world） ====
     visualization_msgs::MarkerArray marker_array;
     ros::Time now = ros::Time::now();
     // 可视化所有气泡（球体）
     for (size_t i = 0; i < bubbles.size(); ++i) {
       visualization_msgs::Marker marker;
-      marker.header.frame_id = "/simulator";
+      marker.header.frame_id = "world";
       marker.header.stamp = now;
       marker.ns = "bubbles";
       marker.id = i;
@@ -345,7 +345,7 @@ int main(int argc, char** argv) {
     }
     // 绳子可视化（折线连接气泡中心）
     visualization_msgs::Marker rope_marker;
-    rope_marker.header.frame_id = "/simulator";
+    rope_marker.header.frame_id = "world";
     rope_marker.header.stamp = now;
     rope_marker.ns = "rope";
     rope_marker.id = 9999;
