@@ -13,7 +13,6 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
 #include <Eigen/Eigen>
-#include <visualization_msgs/MarkerArray.h>
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -35,23 +34,23 @@ typedef struct _Disturbance {
 static Command command;
 static Disturbance disturbance;
 
-// 气泡模型
+// 气泡模型参数
 struct Bubble {
-  Eigen::Vector3d center; // 气泡中心
+  Eigen::Vector3d center; // 气泡中心（世界坐标系）
   double radius;          // 气泡半径
 };
 std::vector<Bubble> bubbles;
 
-// 气泡分布
+// 气泡分布参数
 const double drone_bubble_radius = 0.25; // 无人机本体气泡半径
 const double load_bubble_radius = 0.15;  // 吊载气泡半径
-const double rod_bubble_radius = 0.05;   // 绳气泡半径
-const int rod_bubble_num = 5;            // 绳分几个气泡
-const double rod_length = 1.0;           // 绳长
+const double rod_bubble_radius = 0.05;   // 杆/绳气泡半径
+const int rod_bubble_num = 5;            // 杆/绳分几个气泡
+const double rod_length = 1.0;           // 杆/绳长度
 
 // 碰撞统计变量
 int collision_count = 0;
-bool last_collided = false; // 统计碰撞次数
+bool last_collided = false; // 新增：用于统计碰撞次数
 
 // 全局变量
 std::shared_ptr<fast_planner::EDTEnvironment> edt_environment_;
@@ -211,7 +210,6 @@ int main(int argc, char** argv) {
   ros::Publisher odom_pub = n.advertise<nav_msgs::Odometry>("odom", 100);
   // TODO 球位置发布
   ros::Publisher imu_pub = n.advertise<sensor_msgs::Imu>("imu", 10);
-  ros::Publisher vis_pub = n.advertise<visualization_msgs::MarkerArray>("bubbles_vis", 1);
   ros::Subscriber cmd_sub = n.subscribe("cmd", 100, &cmd_callback, ros::TransportHints().tcpNoDelay());
   ros::Subscriber f_sub = n.subscribe("force_disturbance", 100, &force_disturbance_callback,
                                       ros::TransportHints().tcpNoDelay());
@@ -244,12 +242,12 @@ int main(int argc, char** argv) {
 
   Control control;
   nav_msgs::Odometry odom_msg;
-  odom_msg.header.frame_id = "world";
+  odom_msg.header.frame_id = "/simulator";
   odom_msg.child_frame_id = "/" + quad_name;
   sensor_msgs::Imu imu;
   imu.header.frame_id = "/simulator";
 
-  // 气泡参数通过rosparam读取
+  // ================== 气泡参数通过rosparam读取 ==================
   double drone_bubble_radius, load_bubble_radius, rod_bubble_radius, rod_length, dist0;
   int rod_bubble_num;
   n.param("drone_bubble_radius", drone_bubble_radius, 0.25);
@@ -257,7 +255,7 @@ int main(int argc, char** argv) {
   n.param("rod_bubble_radius", rod_bubble_radius, 0.05);
   n.param("rod_length", rod_length, 1.0);
   n.param("rod_bubble_num", rod_bubble_num, 5);
-  n.param("dist0", dist0, 0.7); // 默认0.7，与优化器一致
+  n.param("dist0", dist0, 0.7); // 默认为0.7，建议与优化器一致
 
   // ESDF Map initialization
   edt_environment_.reset(new fast_planner::EDTEnvironment());
@@ -280,7 +278,7 @@ int main(int argc, char** argv) {
 
   ros::Time next_odom_pub_time = ros::Time::now();
 
-  // 常量 
+  // ========== 常量 ==========
   const Eigen::Vector3d gravity_vec(0.0, 0.0, -9.81);
 
   while (n.ok()) {
@@ -297,7 +295,7 @@ int main(int argc, char** argv) {
     quad.setExternalMoment(disturbance.m);
     quad.step(dt);
 
-    // 气泡分布逻辑（与优化器一致）
+    // ================== 气泡分布逻辑（与优化器完全一致） ==================
     state = quad.getState();
     const Eigen::Vector3d drone_pos = state.x;
     const Eigen::Vector3d acc_drone = quad.getAcc();
@@ -316,59 +314,8 @@ int main(int argc, char** argv) {
       Eigen::Vector3d rod_pos = drone_pos * (1 - alpha) + load_pos * alpha;
       bubbles.push_back({rod_pos, rod_bubble_radius});
     }
-    
-    // ==== RViz可视化气泡和绳子（修正版，全部frame_id为world） ====
-    visualization_msgs::MarkerArray marker_array;
-    ros::Time now = ros::Time::now();
-    // 可视化所有气泡（球体）
-    for (size_t i = 0; i < bubbles.size(); ++i) {
-      visualization_msgs::Marker marker;
-      marker.header.frame_id = "world";
-      marker.header.stamp = now;
-      marker.ns = "bubbles";
-      marker.id = i;
-      marker.type = visualization_msgs::Marker::SPHERE;
-      marker.action = visualization_msgs::Marker::ADD;
-      marker.pose.orientation.w = 1.0;
-      marker.pose.position.x = bubbles[i].center.x();
-      marker.pose.position.y = bubbles[i].center.y();
-      marker.pose.position.z = bubbles[i].center.z();
-      marker.scale.x = bubbles[i].radius * 2;
-      marker.scale.y = bubbles[i].radius * 2;
-      marker.scale.z = bubbles[i].radius * 2;
-      marker.color.a = 0.25;
-      // 渐变色：无人机为红，负载为绿，绳泡为蓝
-      if (i == 0) { marker.color.r = 1.0; marker.color.g = 0.2; marker.color.b = 0.2; }
-      else if (i == 1) { marker.color.r = 0.2; marker.color.g = 1.0; marker.color.b = 0.2; }
-      else { marker.color.r = 0.2; marker.color.g = 0.4; marker.color.b = 1.0; }
-      marker_array.markers.push_back(marker);
-    }
-    // 绳子可视化（折线连接气泡中心）
-    visualization_msgs::Marker rope_marker;
-    rope_marker.header.frame_id = "world";
-    rope_marker.header.stamp = now;
-    rope_marker.ns = "rope";
-    rope_marker.id = 9999;
-    rope_marker.type = visualization_msgs::Marker::LINE_STRIP;
-    rope_marker.action = visualization_msgs::Marker::ADD;
-    rope_marker.pose.orientation.w = 1.0;
-    rope_marker.scale.x = 0.022; // 线宽
-    rope_marker.color.a = 0.8;
-    rope_marker.color.r = 1.0;
-    rope_marker.color.g = 0.8;
-    rope_marker.color.b = 0.2;
-    for (const auto& bubble : bubbles) {
-      geometry_msgs::Point pt;
-      pt.x = bubble.center.x();
-      pt.y = bubble.center.y();
-      pt.z = bubble.center.z();
-      rope_marker.points.push_back(pt);
-    }
-    marker_array.markers.push_back(rope_marker);
-    // 发布marker
-    vis_pub.publish(marker_array);
 
-    // 碰撞统计逻辑（与优化器一致，含dist0）
+    // ================== 碰撞统计逻辑（与优化器一致，含dist0） ==================
     bool frame_collided = false;
     for (const auto& bubble : bubbles) {
       double dist = 1e6;
