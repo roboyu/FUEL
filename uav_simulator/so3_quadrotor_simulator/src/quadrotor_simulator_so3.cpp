@@ -34,23 +34,23 @@ typedef struct _Disturbance {
 static Command command;
 static Disturbance disturbance;
 
-// 气泡模型参数
+// 气泡模型
 struct Bubble {
-  Eigen::Vector3d center; // 气泡中心（世界坐标系）
+  Eigen::Vector3d center; // 气泡中心
   double radius;          // 气泡半径
 };
 std::vector<Bubble> bubbles;
 
-// 气泡分布参数
+// 气泡分布
 const double drone_bubble_radius = 0.25; // 无人机本体气泡半径
 const double load_bubble_radius = 0.15;  // 吊载气泡半径
-const double rod_bubble_radius = 0.05;   // 杆/绳气泡半径
-const int rod_bubble_num = 5;            // 杆/绳分几个气泡
-const double rod_length = 1.0;           // 杆/绳长度
+const double rod_bubble_radius = 0.05;   // 绳气泡半径
+const int rod_bubble_num = 5;            // 绳分几个气泡
+const double rod_length = 1.0;           // 绳长
 
 // 碰撞统计变量
 int collision_count = 0;
-bool last_collided = false; // 新增：用于统计碰撞次数
+bool last_collided = false; // 统计碰撞次数
 
 // 全局变量
 std::shared_ptr<fast_planner::EDTEnvironment> edt_environment_;
@@ -247,7 +247,7 @@ int main(int argc, char** argv) {
   sensor_msgs::Imu imu;
   imu.header.frame_id = "/simulator";
 
-  // ================== 气泡参数通过rosparam读取 ==================
+  // 气泡参数通过rosparam读取
   double drone_bubble_radius, load_bubble_radius, rod_bubble_radius, rod_length, dist0;
   int rod_bubble_num;
   n.param("drone_bubble_radius", drone_bubble_radius, 0.25);
@@ -255,7 +255,7 @@ int main(int argc, char** argv) {
   n.param("rod_bubble_radius", rod_bubble_radius, 0.05);
   n.param("rod_length", rod_length, 1.0);
   n.param("rod_bubble_num", rod_bubble_num, 5);
-  n.param("dist0", dist0, 0.7); // 默认为0.7，建议与优化器一致
+  n.param("dist0", dist0, 0.7); // 默认0.7，与优化器一致
 
   // ESDF Map initialization
   edt_environment_.reset(new fast_planner::EDTEnvironment());
@@ -278,7 +278,7 @@ int main(int argc, char** argv) {
 
   ros::Time next_odom_pub_time = ros::Time::now();
 
-  // ========== 常量 ==========
+  // 常量 
   const Eigen::Vector3d gravity_vec(0.0, 0.0, -9.81);
 
   while (n.ok()) {
@@ -295,7 +295,7 @@ int main(int argc, char** argv) {
     quad.setExternalMoment(disturbance.m);
     quad.step(dt);
 
-    // ================== 气泡分布逻辑（与优化器完全一致） ==================
+    // 气泡分布逻辑（与优化器一致）
     state = quad.getState();
     const Eigen::Vector3d drone_pos = state.x;
     const Eigen::Vector3d acc_drone = quad.getAcc();
@@ -315,7 +315,7 @@ int main(int argc, char** argv) {
       bubbles.push_back({rod_pos, rod_bubble_radius});
     }
 
-    // ================== 碰撞统计逻辑（与优化器一致，含dist0） ==================
+    // 碰撞统计逻辑（与优化器一致，含dist0）
     bool frame_collided = false;
     for (const auto& bubble : bubbles) {
       double dist = 1e6;
