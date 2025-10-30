@@ -13,6 +13,7 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
 #include <Eigen/Eigen>
+#include <visualization_msgs/MarkerArray.h>
 
 typedef struct _Control { double rpm[4]; } Control;
 
@@ -210,6 +211,7 @@ int main(int argc, char** argv) {
   ros::Publisher odom_pub = n.advertise<nav_msgs::Odometry>("odom", 100);
   // TODO 球位置发布
   ros::Publisher imu_pub = n.advertise<sensor_msgs::Imu>("imu", 10);
+  ros::Publisher vis_pub = n.advertise<visualization_msgs::MarkerArray>("bubbles_vis", 1);
   ros::Subscriber cmd_sub = n.subscribe("cmd", 100, &cmd_callback, ros::TransportHints().tcpNoDelay());
   ros::Subscriber f_sub = n.subscribe("force_disturbance", 100, &force_disturbance_callback,
                                       ros::TransportHints().tcpNoDelay());
@@ -314,6 +316,57 @@ int main(int argc, char** argv) {
       Eigen::Vector3d rod_pos = drone_pos * (1 - alpha) + load_pos * alpha;
       bubbles.push_back({rod_pos, rod_bubble_radius});
     }
+    
+    // ==== 新增: RViz可视化气泡和绳子 ====
+    visualization_msgs::MarkerArray marker_array;
+    ros::Time now = ros::Time::now();
+    // 可视化所有气泡（球体）
+    for (size_t i = 0; i < bubbles.size(); ++i) {
+      visualization_msgs::Marker marker;
+      marker.header.frame_id = "/simulator";
+      marker.header.stamp = now;
+      marker.ns = "bubbles";
+      marker.id = i;
+      marker.type = visualization_msgs::Marker::SPHERE;
+      marker.action = visualization_msgs::Marker::ADD;
+      marker.pose.orientation.w = 1.0;
+      marker.pose.position.x = bubbles[i].center.x();
+      marker.pose.position.y = bubbles[i].center.y();
+      marker.pose.position.z = bubbles[i].center.z();
+      marker.scale.x = bubbles[i].radius * 2;
+      marker.scale.y = bubbles[i].radius * 2;
+      marker.scale.z = bubbles[i].radius * 2;
+      marker.color.a = 0.25;
+      // 渐变色：无人机为红，负载为绿，绳泡为蓝
+      if (i == 0) { marker.color.r = 1.0; marker.color.g = 0.2; marker.color.b = 0.2; }
+      else if (i == 1) { marker.color.r = 0.2; marker.color.g = 1.0; marker.color.b = 0.2; }
+      else { marker.color.r = 0.2; marker.color.g = 0.4; marker.color.b = 1.0; }
+      marker_array.markers.push_back(marker);
+    }
+    // 绳子可视化（折线连接气泡中心）
+    visualization_msgs::Marker rope_marker;
+    rope_marker.header.frame_id = "/simulator";
+    rope_marker.header.stamp = now;
+    rope_marker.ns = "rope";
+    rope_marker.id = 9999;
+    rope_marker.type = visualization_msgs::Marker::LINE_STRIP;
+    rope_marker.action = visualization_msgs::Marker::ADD;
+    rope_marker.pose.orientation.w = 1.0;
+    rope_marker.scale.x = 0.022; // 线宽
+    rope_marker.color.a = 0.8;
+    rope_marker.color.r = 1.0;
+    rope_marker.color.g = 0.8;
+    rope_marker.color.b = 0.2;
+    for (const auto& bubble : bubbles) {
+      geometry_msgs::Point pt;
+      pt.x = bubble.center.x();
+      pt.y = bubble.center.y();
+      pt.z = bubble.center.z();
+      rope_marker.points.push_back(pt);
+    }
+    marker_array.markers.push_back(rope_marker);
+    // 发布marker
+    vis_pub.publish(marker_array);
 
     // 碰撞统计逻辑（与优化器一致，含dist0）
     bool frame_collided = false;
