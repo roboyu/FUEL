@@ -8,6 +8,7 @@
 #include <vector>
 #include <signal.h>
 #include <fstream>
+#include <cstdio>
 #include <plan_env/edt_environment.h>
 #include <plan_env/sdf_map.h>
 #include <pcl/io/pcd_io.h>
@@ -282,8 +283,23 @@ int main(int argc, char** argv) {
 
   ros::Time next_odom_pub_time = ros::Time::now();
 
+  // ================== 打开碰撞检测日志文件 ==================
+  std::ofstream collision_log_file("/tmp/collision_debug.log", std::ios::trunc);
+  if (!collision_log_file.is_open()) {
+    ROS_ERROR("Failed to open collision debug log file!");
+  } else {
+    collision_log_file << "========== Collision Detection Debug Log ==========" << std::endl;
+    collision_log_file << "Log started at: " << ros::Time::now() << std::endl;
+    collision_log_file << "Format: [Event_Type] Frame:XXX | Key:Value | ..." << std::endl;
+    collision_log_file << "===================================================" << std::endl;
+    collision_log_file.flush();
+  }
+
   // ========== 常量 ==========
   const Eigen::Vector3d gravity_vec(0.0, 0.0, -9.81);
+  
+  // ================== 帧计数器（用于日志） ==================
+  int frame_counter = 0;
 
   while (n.ok()) {
     ros::spinOnce();
@@ -320,20 +336,94 @@ int main(int argc, char** argv) {
     }
 
     // ================== 碰撞统计逻辑（与优化器一致，含dist0） ==================
+    frame_counter++;
+    
     bool frame_collided = false;
-    for (const auto& bubble : bubbles) {
+    double collided_dist = 1e6;
+    double collided_radius = 0.0;
+    int collided_bubble_idx = -1;
+    
+    // 记录最小距离和对应的气泡信息（用于周期性日志）
+    double min_dist_all = 1e6;
+    double min_dist_radius = 0.0;
+    int min_dist_bubble_idx = -1;
+    
+    for (size_t i = 0; i < bubbles.size(); ++i) {
+      const auto& bubble = bubbles[i];
       double dist = 1e6;
       if (edt_environment_ && edt_environment_->sdf_map_) {
         dist = edt_environment_->sdf_map_->getDistance(bubble.center);
       }
+      
+      // 记录最小距离
+      if (dist < min_dist_all) {
+        min_dist_all = dist;
+        min_dist_radius = bubble.radius;
+        min_dist_bubble_idx = i;
+      }
+      
       if (dist < bubble.radius) {
         frame_collided = true;
+        collided_dist = dist;
+        collided_radius = bubble.radius;
+        collided_bubble_idx = i;
         break;
       }
     }
-    if (frame_collided && !last_collided) {
-      collision_count++;
+    
+    // 记录状态变化和关键数据
+    bool state_changed = (frame_collided != last_collided);
+    
+    if (state_changed) {
+      if (frame_collided) {
+        // 状态从 SAFE -> COLLIDED
+        collision_count++;
+        char log_buf[512];
+        snprintf(log_buf, sizeof(log_buf), 
+                 "[COLLISION_STATE_CHANGE] Frame:%d | SAFE->COLLIDED | collision_count:%d->%d | dist:%.4f | radius:%.4f | bubble_idx:%d",
+                 frame_counter, collision_count-1, collision_count, collided_dist, collided_radius, collided_bubble_idx);
+        ROS_ERROR("%s", log_buf);
+        if (collision_log_file.is_open()) {
+          collision_log_file << log_buf << std::endl;
+          collision_log_file.flush();
+        }
+      } else {
+        // 状态从 COLLIDED -> SAFE
+        char log_buf[512];
+        snprintf(log_buf, sizeof(log_buf),
+                 "[COLLISION_STATE_CHANGE] Frame:%d | COLLIDED->SAFE | collision_count:%d | last_collided:true->false",
+                 frame_counter, collision_count);
+        ROS_WARN("%s", log_buf);
+        if (collision_log_file.is_open()) {
+          collision_log_file << log_buf << std::endl;
+          collision_log_file.flush();
+        }
+      }
     }
+    
+    // 记录当前状态（每100帧记录一次，便于追踪连续状态）
+    if (frame_counter % 100 == 0) {
+      char log_buf[512];
+      if (frame_collided) {
+        // 有碰撞时，记录碰撞气泡的信息
+        snprintf(log_buf, sizeof(log_buf),
+                 "[COLLISION_STATUS] Frame:%d | frame_collided:%s | last_collided:%s | collision_count:%d | dist:%.4f | radius:%.4f | bubble_idx:%d",
+                 frame_counter, frame_collided ? "true" : "false", last_collided ? "true" : "false", collision_count,
+                 collided_dist, collided_radius, collided_bubble_idx);
+      } else {
+        // 无碰撞时，记录最小距离气泡的信息
+        snprintf(log_buf, sizeof(log_buf),
+                 "[COLLISION_STATUS] Frame:%d | frame_collided:%s | last_collided:%s | collision_count:%d | min_dist:%.4f | min_dist_radius:%.4f | min_dist_bubble_idx:%d",
+                 frame_counter, frame_collided ? "true" : "false", last_collided ? "true" : "false", collision_count,
+                 min_dist_all, min_dist_radius, min_dist_bubble_idx);
+      }
+      ROS_INFO("%s", log_buf);
+      if (collision_log_file.is_open()) {
+        collision_log_file << log_buf << std::endl;
+        collision_log_file.flush();
+      }
+    }
+    
     last_collided = frame_collided;
 
     // ================== bubbles 绳索rviz可视化 ====================
@@ -397,7 +487,18 @@ int main(int argc, char** argv) {
     r.sleep();
   }
 
-  // File output
+  // 关闭碰撞检测日志文件
+  if (collision_log_file.is_open()) {
+    collision_log_file << "===================================================" << std::endl;
+    collision_log_file << "Log ended at: " << ros::Time::now() << std::endl;
+    collision_log_file << "Total frames: " << frame_counter << std::endl;
+    collision_log_file << "Total collision events: " << collision_count << std::endl;
+    collision_log_file << "===================================================" << std::endl;
+    collision_log_file.close();
+    ROS_INFO("Collision debug log saved to: /tmp/collision_debug.log");
+  }
+  
+  // File output (原有的统计文件)
   std::ofstream fout("/tmp/collision_count.txt", std::ios::app);
   fout << "Collision count for this run: " << collision_count << std::endl;
   fout.close();
