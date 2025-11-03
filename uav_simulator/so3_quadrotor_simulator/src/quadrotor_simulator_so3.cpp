@@ -276,7 +276,12 @@ int main(int argc, char** argv) {
           ROS_ERROR_STREAM("Cannot load map file from: " << map_file);
       } else {
           ROS_INFO_STREAM("Loaded map with " << cloud->size() << " points from: " << map_file);
+          // Input point cloud to update occupancy grid
           sdf_map_->inputPointCloud(*cloud, cloud->size(), Eigen::Vector3d(0,0,0));
+          // IMPORTANT: Update ESDF after loading point cloud to compute distance field
+          ROS_INFO("Updating ESDF after loading point cloud...");
+          sdf_map_->updateESDF3d();
+          ROS_INFO("ESDF update completed.");
       }
   }
   edt_environment_->setMap(sdf_map_);
