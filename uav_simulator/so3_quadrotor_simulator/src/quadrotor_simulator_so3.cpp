@@ -281,6 +281,22 @@ int main(int argc, char** argv) {
   }
   edt_environment_->setMap(sdf_map_);
 
+  // ========== 调试：打印地图边界（origin 与 max）到控制台 ==========
+  {
+    if (edt_environment_ && edt_environment_->sdf_map_) {
+      Eigen::Vector3d map_ori, map_size;
+      edt_environment_->sdf_map_->getRegion(map_ori, map_size);
+      Eigen::Vector3d map_min = map_ori;
+      Eigen::Vector3d map_max = map_ori + map_size;
+      ROS_INFO("[SDF DEBUG] Map region origin:(%.2f, %.2f, %.2f) size:(%.2f, %.2f, %.2f)",
+               map_ori.x(), map_ori.y(), map_ori.z(), map_size.x(), map_size.y(), map_size.z());
+      ROS_INFO("[SDF DEBUG] Map boundaries  min:(%.2f, %.2f, %.2f)  max:(%.2f, %.2f, %.2f)",
+               map_min.x(), map_min.y(), map_min.z(), map_max.x(), map_max.y(), map_max.z());
+    } else {
+      ROS_WARN("[SDF DEBUG] edt_environment_ or sdf_map_ is null, cannot print map boundaries.");
+    }
+  }
+
   ros::Time next_odom_pub_time = ros::Time::now();
 
   // ================== 打开碰撞检测日志文件 ==================
@@ -293,6 +309,24 @@ int main(int argc, char** argv) {
     collision_log_file << "Format: [Event_Type] Frame:XXX | Key:Value | ..." << std::endl;
     collision_log_file << "===================================================" << std::endl;
     collision_log_file.flush();
+
+    // 启动时也把地图边界写入原始日志文件
+    if (edt_environment_ && edt_environment_->sdf_map_) {
+      Eigen::Vector3d map_ori, map_size;
+      edt_environment_->sdf_map_->getRegion(map_ori, map_size);
+      Eigen::Vector3d map_min = map_ori;
+      Eigen::Vector3d map_max = map_ori + map_size;
+      char buf[256];
+      snprintf(buf, sizeof(buf),
+               "[SDF DEBUG] Map region origin:(%.2f, %.2f, %.2f) size:(%.2f, %.2f, %.2f)",
+               map_ori.x(), map_ori.y(), map_ori.z(), map_size.x(), map_size.y(), map_size.z());
+      collision_log_file << buf << std::endl;
+      snprintf(buf, sizeof(buf),
+               "[SDF DEBUG] Map boundaries  min:(%.2f, %.2f, %.2f)  max:(%.2f, %.2f, %.2f)",
+               map_min.x(), map_min.y(), map_min.z(), map_max.x(), map_max.y(), map_max.z());
+      collision_log_file << buf << std::endl;
+      collision_log_file.flush();
+    }
   }
 
   // ========== 常量 ==========
@@ -425,6 +459,27 @@ int main(int argc, char** argv) {
     }
     
     last_collided = frame_collided;
+
+    // ========== 调试：周期性打印每个气泡是否在地图内 ==========
+    if (frame_counter % 200 == 0) {
+      if (edt_environment_ && edt_environment_->sdf_map_) {
+        for (size_t i = 0; i < bubbles.size(); ++i) {
+          const auto& b = bubbles[i];
+          bool in_map = edt_environment_->sdf_map_->isInMap(b.center);
+          ROS_INFO("[SDF DEBUG] Bubble %zu pos:(%.2f, %.2f, %.2f) r:%.3f in_map:%s", i,
+                   b.center.x(), b.center.y(), b.center.z(), b.radius, in_map ? "true" : "false");
+          if (collision_log_file.is_open()) {
+            char buf[256];
+            snprintf(buf, sizeof(buf),
+                     "[SDF DEBUG] Bubble %zu pos:(%.2f, %.2f, %.2f) r:%.3f in_map:%s",
+                     i, b.center.x(), b.center.y(), b.center.z(), b.radius,
+                     in_map ? "true" : "false");
+            collision_log_file << buf << std::endl;
+          }
+        }
+        if (collision_log_file.is_open()) collision_log_file.flush();
+      }
+    }
 
     // ================== bubbles 绳索rviz可视化 ====================
     // 1. 气泡可视化，所有气泡都画成透明球体，颜色区分无人机/载荷/绳子
