@@ -82,6 +82,14 @@
     <arg name="init_y" value="$(arg init_y)"/>
     <arg name="init_z" value="$(arg init_z)"/>
 
+    <!-- pass through exploration bounding box to simulator (for SDF map) -->
+    <arg name="box_min_x" value="-10.0"/>
+    <arg name="box_min_y" value="-10.0"/>
+    <arg name="box_min_z" value=" 0.0"/>
+    <arg name="box_max_x" value="10.0"/>
+    <arg name="box_max_y" value="10.0"/>
+    <arg name="box_max_z" value=" 3.0"/>
+
     <arg name="odometry_topic" value="$(arg odom_topic)" />
     <arg name="c_num" value="0"/>
     <arg name="p_num" value="130"/>
