@@ -53,6 +53,11 @@
   </node> -->
 
   <node pkg="so3_quadrotor_simulator" type="quadrotor_simulator_so3" name="quadrotor_simulator_so3" output="screen">
+        <param name="map_path" value="$(find map_generator)/resource/new.pcd"/>
+        <param name="map/x_size" value="$(arg map_size_x_)"/>
+        <param name="map/y_size" value="$(arg map_size_y_)"/>
+        <param name="map/z_size" value="$(arg map_size_z_)"/>
+        <param name="map/resolution" value="0.1"/>
         <param name="rate/odom" value="200.0"/>
         <param name="simulator/init_state_x" value="$(arg init_x)"/>
         <param name="simulator/init_state_y" value="$(arg init_y)"/>
