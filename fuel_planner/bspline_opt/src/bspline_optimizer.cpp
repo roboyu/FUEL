@@ -19,8 +19,8 @@ const int BsplineOptimizer::MINTIME = (1 << 8);
 
 const int BsplineOptimizer::GUIDE_PHASE = BsplineOptimizer::SMOOTHNESS | BsplineOptimizer::GUIDE |
     BsplineOptimizer::START | BsplineOptimizer::END;
-const int BsplineOptimizer::NORMAL_PHASE = BsplineOptimizer::SMOOTHNESS | BsplineOptimizer::DISTANCE |
-    BsplineOptimizer::FEASIBILITY | BsplineOptimizer::START | BsplineOptimizer::END;
+const int BsplineOptimizer::NORMAL_PHASE = BsplineOptimizer::SMOOTHNESS |
+    BsplineOptimizer::DISTANCE | BsplineOptimizer::FEASIBILITY | BsplineOptimizer::START | BsplineOptimizer::END;
 
 void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/ld_smooth", ld_smooth_, -1.0);
@@ -52,6 +52,12 @@ void BsplineOptimizer::setParam(ros::NodeHandle& nh) {
   nh.param("optimization/algorithm2", algorithm2_, -1);
   nh.param("manager/bspline_degree", bspline_degree_, 3);
 
+  nh.param("optimization/drone_bubble_radius", drone_bubble_radius_, 0.25);
+  nh.param("optimization/load_bubble_radius", load_bubble_radius_, 0.15);
+  nh.param("optimization/rod_bubble_radius", rod_bubble_radius_, 0.05);
+  nh.param("optimization/rod_length", rod_length_, 1.0);
+  nh.param("optimization/rod_bubble_num", rod_bubble_num_, 5);
+
   time_lb_ = -1;  // Not used by in most case
 }
 
@@ -66,7 +72,6 @@ void BsplineOptimizer::setCostFunction(const int& cost_code) {
   // print optimized cost function
   string cost_str;
   if (cost_function_ & SMOOTHNESS) cost_str += "smooth |";
-  if (cost_function_ & DISTANCE) cost_str += " dist  |";
   if (cost_function_ & FEASIBILITY) cost_str += " feasi |";
   if (cost_function_ & START) cost_str += " start |";
   if (cost_function_ & END) cost_str += " end   |";
@@ -143,7 +148,6 @@ void BsplineOptimizer::optimize(Eigen::MatrixXd& points, double& dt, const int& 
   min_cost_ = std::numeric_limits<double>::max();
   g_q_.resize(point_num_);
   g_smoothness_.resize(point_num_);
-  g_distance_.resize(point_num_);
   g_feasibility_.resize(point_num_);
   g_start_.resize(point_num_);
   g_end_.resize(point_num_);
@@ -278,30 +282,6 @@ void BsplineOptimizer::calcSmoothnessCost(const vector<Eigen::Vector3d>& q, cons
     gradient_q[i + 3] += temp_j;
     // if (optimize_time_)
     //   gt += -6 * ji.dot(ji) / dt;
-  }
-}
-
-void BsplineOptimizer::calcDistanceCost(const vector<Eigen::Vector3d>& q, double& cost,
-                                        vector<Eigen::Vector3d>& gradient_q) {
-  cost = 0.0;
-  Eigen::Vector3d zero(0, 0, 0);
-  std::fill(gradient_q.begin(), gradient_q.end(), zero);
-
-  double dist;
-  Eigen::Vector3d dist_grad, g_zero(0, 0, 0);
-  for (int i = 0; i < q.size(); i++) {
-    if (!dynamic_) {
-      edt_environment_->evaluateEDTWithGrad(q[i], -1.0, dist, dist_grad);
-      if (dist_grad.norm() > 1e-4) dist_grad.normalize();
-    } else {
-      double time = double(i + 2 - order_) * knot_span_ + start_time_;
-      edt_environment_->evaluateEDTWithGrad(q[i], time, dist, dist_grad);
-    }
-
-    if (dist < dist0_) {
-      cost += pow(dist - dist0_, 2);
-      gradient_q[i] += 2.0 * (dist - dist0_) * dist_grad;
-    }
   }
 }
 
@@ -515,6 +495,116 @@ void BsplineOptimizer::calcTimeCost(const double& dt, double& cost, double& gt) 
   }
 }
 
+void BsplineOptimizer::calcBubbleCollisionCost(const std::vector<Eigen::Vector3d>& q, double& cost, std::vector<Eigen::Vector3d>& gradient_q) {
+  // 初始化
+  cost = 0.0;
+  Eigen::Vector3d zero(0, 0, 0);
+  std::fill(gradient_q.begin(), gradient_q.end(), zero);
+
+  // 世界坐标系下的重力加速度向量 (Z轴向上)
+  const Eigen::Vector3d gravity_vec(0.0, 0.0, -9.81); 
+  const double dt = knot_span_;
+  if (std::abs(dt) < 1e-6) { 
+      return;
+  }
+  const double dt_sq_inv = 1.0 / (dt * dt);
+
+  // 遍历中间的控制点
+  for (int i = 1; i < q.size() - 1; ++i) {
+    // 无人机位置
+    const Eigen::Vector3d& drone_pos = q[i];
+
+    // 无人机加速度估算
+    const Eigen::Vector3d acc_drone = (q[i + 1] - 2 * q[i] + q[i - 1]) * dt_sq_inv;
+    
+    // 从无人机指向负载的杆的方向向量
+    Eigen::Vector3d rod_direction = gravity_vec - acc_drone;
+    
+    // 安全检查并归一化
+    if (rod_direction.squaredNorm() < 1e-8) { 
+        // 加速度恰好抵消重力，或极小，此时默认杆竖直向下
+        rod_direction = Eigen::Vector3d(0.0, 0.0, -1.0);
+    } else {
+        rod_direction.normalize();
+    }
+
+    // 计算负载和杆上各点的位置
+    const Eigen::Vector3d load_pos = drone_pos + rod_direction * rod_length_;
+
+    // 创建气泡列表
+    std::vector<std::pair<Eigen::Vector3d, double>> bubbles;
+    std::vector<double> alphas; // 存储每个气泡的alpha值，用于后续梯度分配
+    
+    bubbles.push_back({drone_pos, drone_bubble_radius_});
+    alphas.push_back(0.0); // 无人机气泡的alpha为0
+
+    bubbles.push_back({load_pos, load_bubble_radius_});
+    alphas.push_back(1.0); // 负载气泡的alpha为1
+
+    for (int j = 1; j <= rod_bubble_num_; ++j) {
+      double alpha = double(j) / (rod_bubble_num_ + 1);
+      Eigen::Vector3d rod_pos = drone_pos * (1 - alpha) + load_pos * alpha;
+      bubbles.push_back({rod_pos, rod_bubble_radius_});
+      alphas.push_back(alpha); // 杆上气泡的alpha
+    }
+
+    // 代价与梯度计算
+    for (size_t k = 0; k < bubbles.size(); ++k) {
+      const auto& bubble = bubbles[k];
+      const double alpha = alphas[k]; // 获取对应的alpha值
+
+      double dist;
+      Eigen::Vector3d dist_grad;
+      edt_environment_->evaluateEDTWithGrad(bubble.first, -1.0, dist, dist_grad);
+      if (dist_grad.squaredNorm() > 1e-8) dist_grad.normalize();
+
+      double d = dist0_ + bubble.second - dist;
+      
+      if (d > 0) {
+        cost += std::exp(d) - 1.0 - d - (d * d) / 2.0;
+        
+        // 梯度分配
+        Eigen::Vector3d cost_grad_on_bubble_pos = (std::exp(d) - 1.0 - d) * (-dist_grad);
+
+        // 我们知道 bubble_pos = (1-alpha)*drone_pos + alpha*load_pos
+        //                = (1-alpha)*q[i] + alpha*(q[i] + rod_dir*L)
+        //                = q[i] + alpha * rod_dir * L
+        
+        // 梯度由两部分贡献：
+        // 1. 整体平移 (q[i] 的变化)
+        // 2. 杆摆动 (rod_dir 的变化, 它依赖于 acc, 进而依赖于 q[i-1], q[i], q[i+1])
+        
+        // 1. 平移项的梯度: d(bubble_pos)/d(q[i]) 中包含一个单位矩阵 I
+        gradient_q[i] += cost_grad_on_bubble_pos;
+
+        // 2. 摆动项的梯度:
+        // d(bubble_pos)/d(q_k) = alpha * L * d(rod_dir)/d(q_k)
+        // d(rod_dir)/d(q_k) ~= -d(acc)/d(q_k) / |g-a| (忽略normalize的导数中的复杂项)
+        // 这个近似已经非常好了。
+        if (alpha > 1e-5) { // alpha=0的气泡(无人机本身)没有摆动项
+            Eigen::Vector3d swing_grad_base = cost_grad_on_bubble_pos * alpha * rod_length_;
+            
+            // 将梯度按照加速度公式 (1, -2, 1) 的系数分配回去
+            gradient_q[i+1] += swing_grad_base * (-dt_sq_inv);
+            gradient_q[i]   -= swing_grad_base * (-2.0 * dt_sq_inv);
+            gradient_q[i-1] += swing_grad_base * (-dt_sq_inv);
+        }
+      }
+    }
+  }
+
+  // 归一化
+  if (q.size() > 2) {
+      const double normalizer = (q.size() - 2) * (2 + rod_bubble_num_);
+      if (normalizer > 1e-5) {
+        cost /= normalizer;
+        for (int i = 0; i < q.size(); ++i) {
+          gradient_q[i] /= normalizer;
+        }
+      }
+  }
+}
+
 void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<double>& grad,
                                    double& f_combine) {
   {
@@ -577,14 +667,6 @@ void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<dou
         grad[dim_ * i + j] += ld_smooth_ * g_smoothness_[i](j);
     if (optimize_time_) grad[variable_num_ - 1] += ld_smooth_ * gt_smoothness;
   }
-  if (cost_function_ & DISTANCE) {
-    double f_distance = 0.0;
-    calcDistanceCost(g_q_, f_distance, g_distance_);
-    f_combine += ld_dist_ * f_distance;
-    for (int i = 0; i < point_num_; i++)
-      for (int j = 0; j < dim_; j++)
-        grad[dim_ * i + j] += ld_dist_ * g_distance_[i](j);
-  }
   if (cost_function_ & FEASIBILITY) {
     double f_feasibility = 0.0, gt_feasibility = 0.0;
     calcFeasibilityCost(g_q_, dt, f_feasibility, g_feasibility_, gt_feasibility);
@@ -643,6 +725,16 @@ void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<dou
     grad[variable_num_ - 1] += ld_time_ * gt_time;
   }
 
+  if (cost_function_ & DISTANCE) {
+    double f_bubble = 0.0;
+    std::vector<Eigen::Vector3d> g_bubble(point_num_, Eigen::Vector3d::Zero());
+    calcBubbleCollisionCost(g_q_, f_bubble, g_bubble);
+    f_combine += ld_dist_ * f_bubble;
+    for (int i = 0; i < point_num_; i++)
+      for (int j = 0; j < dim_; j++)
+        grad[dim_ * i + j] += ld_dist_ * g_bubble[i](j);
+  }
+
   comb_time += (ros::Time::now() - t1).toSec();
 
   // // Join thread and retrive cost/gradient
@@ -657,13 +749,6 @@ void BsplineOptimizer::combineCost(const std::vector<double>& x, std::vector<dou
   //       grad[dim_ * i + j] += ld_smooth_ * g_smoothness_[i](j);
   //   if (optimize_time_)
   //     grad[variable_num_ - 1] += ld_smooth_ * gt_smoothness;
-  // }
-  // if (cost_function_ & DISTANCE)
-  // {
-  //   f_combine += ld_dist_ * f_distance;
-  //   for (int i = 0; i < point_num_; i++)
-  //     for (int j = 0; j < dim_; j++)
-  //       grad[dim_ * i + j] += ld_dist_ * g_distance_[i](j);
   // }
   // if (cost_function_ & FEASIBILITY)
   // {
