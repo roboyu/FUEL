@@ -34,7 +34,7 @@ public:
   }
 
   /* main API */
-  void setEnvironment(const shared_ptr<EDTEnvironment>& env);
+  void setEnvironment(const EDTEnvironment::Ptr& env);
   void setParam(ros::NodeHandle& nh);
   void optimize(Eigen::MatrixXd& points, double& dt, const int& cost_function, const int& max_num_id,
                 const int& max_time_id);
@@ -66,8 +66,6 @@ private:
   // Cost functions, q: control points, dt: knot span
   void calcSmoothnessCost(const vector<Eigen::Vector3d>& q, const double& dt, double& cost,
                           vector<Eigen::Vector3d>& gradient_q, double& gt);
-  void calcDistanceCost(const vector<Eigen::Vector3d>& q, double& cost,
-                        vector<Eigen::Vector3d>& gradient_q);
   void calcFeasibilityCost(const vector<Eigen::Vector3d>& q, const double& dt, double& cost,
                            vector<Eigen::Vector3d>& gradient_q, double& gt);
   void calcStartCost(const vector<Eigen::Vector3d>& q, const double& dt, double& cost,
@@ -82,7 +80,7 @@ private:
   void calcTimeCost(const double& dt, double& cost, double& gt);
   bool isQuadratic();
 
-  shared_ptr<EDTEnvironment> edt_environment_;
+  EDTEnvironment::Ptr edt_environment_;
 
   // Optimized variables
   Eigen::MatrixXd control_points_;  // B-spline control points, N x dim
@@ -104,7 +102,6 @@ private:
   int order_;  // bspline degree
   int bspline_degree_;
   double ld_smooth_, ld_dist_, ld_feasi_, ld_start_, ld_end_, ld_guide_, ld_waypt_, ld_view_, ld_time_;
-  double dist0_;              // safe distance
   double max_vel_, max_acc_;  // dynamic limits
   double wnl_, dlmin_;
   int algorithm1_;                // optimization algorithms for quadratic cost
@@ -113,7 +110,7 @@ private:
   double max_iteration_time_[4];  // stopping criteria that can be used
 
   // Data of opt
-  vector<Eigen::Vector3d> g_q_, g_smoothness_, g_distance_, g_feasibility_, g_start_, g_end_, g_guide_,
+  vector<Eigen::Vector3d> g_q_, g_smoothness_, g_feasibility_, g_start_, g_end_, g_guide_,
       g_waypoints_, g_view_, g_time_;
 
   int variable_num_;  // optimization variables
@@ -141,6 +138,14 @@ public:
   typedef unique_ptr<BsplineOptimizer> Ptr;
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+  // 气泡模型参数
+  double drone_bubble_radius_, load_bubble_radius_, rod_bubble_radius_, rod_length_;
+  int rod_bubble_num_;
+  double dist0_; // 安全距离边际参数
+
+  // 避障cost（气泡模型，受DISTANCE标志位和ld_dist_权重控制）
+  void calcBubbleCollisionCost(const std::vector<Eigen::Vector3d>& q, double& cost, std::vector<Eigen::Vector3d>& gradient_q);
 };
 }  // namespace fast_planner
 #endif
