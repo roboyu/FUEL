@@ -554,7 +554,7 @@ int main(int argc, char** argv) {
   }
   
   // File output (原有的统计文件)
-  std::ofstream fout("/tmp/collision_countt.txt", std::ios::app);
+  std::ofstream fout("/tmp/collision_count.txt", std::ios::app);
   fout << "Collision count for this run: " << collision_count << std::endl;
   fout.close();
 
