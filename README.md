@@ -25,3 +25,4 @@ By default you can see an office-like environment. Trigger the quadrotor to star
 
 
 ## Exploring Different Environments
+rostopic pub /rescue_drop_point geometry_msgs/PointStamped '{header: {stamp: now, frame_id: "map"}, point: {x: 1.0, y: 2.0, z: 0.5}}' -r 1
