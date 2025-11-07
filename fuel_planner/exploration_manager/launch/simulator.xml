@@ -57,6 +57,17 @@
         <param name="simulator/init_state_x" value="$(arg init_x)"/>
         <param name="simulator/init_state_y" value="$(arg init_y)"/>
         <param name="simulator/init_state_z" value="$(arg init_z)"/>
+        
+        <param name="map_path" value="$(find map_generator)/resource/new.pcd"/>
+
+        <!-- SDF Map 参数 - 必须使用 sdf_map/ 前缀 -->
+        <param name="sdf_map/resolution" value="0.1"/>
+        <param name="sdf_map/map_size_x" value="$(arg map_size_x_)"/>
+        <param name="sdf_map/map_size_y" value="$(arg map_size_y_)"/>
+        <param name="sdf_map/map_size_z" value="$(arg map_size_z_)"/>
+        <param name="sdf_map/ground_height" value="-0.5"/>
+        <!-- 注意：SDFMap 会自动计算 map_origin = (-x_size/2, -y_size/2, ground_height) -->
+
 
         <remap from="~odom" to="/visual_slam/odom"/>
         <remap from="~cmd" to="so3_cmd"/>
